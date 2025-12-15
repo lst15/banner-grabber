@@ -61,10 +61,7 @@ fn find_delimiter(buf: &[u8], extra: Option<&[u8]>) -> Option<usize> {
         if delim.is_empty() {
             return None;
         }
-        if let Some(pos) = buf
-            .windows(delim.len())
-            .position(|window| window == delim)
-        {
+        if let Some(pos) = buf.windows(delim.len()).position(|window| window == delim) {
             return Some(pos + delim.len());
         }
     }
