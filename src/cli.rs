@@ -7,7 +7,7 @@ use std::fmt;
 #[command(author, version, about = "Async banner grabbing tool", long_about = None)]
 pub struct Cli {
     /// Single host to scan
-    #[arg(short = 'h', long = "host", value_name = "HOST")]
+    #[arg(short = 'H', long = "host", value_name = "HOST")]
     pub host: Option<String>,
 
     /// Single port to scan
