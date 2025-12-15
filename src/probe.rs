@@ -17,6 +17,7 @@ pub trait Prober: Send + Sync {
 
     fn matches(&self, target: &Target) -> bool;
 
+    #[allow(dead_code)]
     fn fingerprint(&self, _banner: &[u8]) -> Fingerprint {
         Fingerprint {
             protocol: Some(self.name().into()),
@@ -39,7 +40,7 @@ pub trait Prober: Send + Sync {
         }
 
         let mut reader = BannerReader::new(cfg.max_bytes);
-        let bytes = reader.read(stream).await?;
+        let bytes = reader.read(stream, self.expected_delimiter()).await?;
         capture.extend_from_slice(&bytes);
         Ok(())
     }

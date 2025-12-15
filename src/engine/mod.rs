@@ -102,7 +102,7 @@ async fn process_target(target: crate::model::Target, cfg: &Config) -> anyhow::R
     if let Some(probe) = probe {
         probe.execute(&mut stream, &mut banner_bytes, cfg).await?;
     } else {
-        match timeout(cfg.read_timeout, reader.read(&mut stream)).await {
+        match timeout(cfg.read_timeout, reader.read(&mut stream, None)).await {
             Ok(Ok(bytes)) => banner_bytes = bytes,
             Ok(Err(err)) => return Err(err),
             Err(_) => return Ok(empty_outcome(target, Status::Timeout, tcp_meta)),
@@ -110,7 +110,7 @@ async fn process_target(target: crate::model::Target, cfg: &Config) -> anyhow::R
     }
 
     if banner_bytes.is_empty() {
-        match timeout(cfg.read_timeout, reader.read(&mut stream)).await {
+        match timeout(cfg.read_timeout, reader.read(&mut stream, None)).await {
             Ok(Ok(bytes)) => banner_bytes = bytes,
             Ok(Err(err)) => return Err(err),
             Err(_) => return Ok(empty_outcome(target, Status::Timeout, tcp_meta)),

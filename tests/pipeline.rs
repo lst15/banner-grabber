@@ -6,7 +6,7 @@ use tokio::net::TcpListener;
 async fn reader_handles_delayed_banner() {
     let mut reader = BannerReader::new(32);
     let mut data: &[u8] = b"hello\r\n";
-    let banner = reader.read(&mut data).await.unwrap();
+    let banner = reader.read(&mut data, None).await.unwrap();
     assert_eq!(banner, b"hello\r\n");
 }
 
