@@ -56,12 +56,19 @@ pub fn probe_for_target(req: &ProbeRequest) -> Option<Box<dyn Prober>> {
         return None;
     }
 
-    let probes: Vec<Box<dyn Prober>> = vec![Box::new(HttpProbe), Box::new(RedisProbe)];
+    let probes: Vec<Box<dyn Prober>> = vec![Box::new(RedisProbe), Box::new(HttpProbe)];
     for probe in probes {
         if probe.matches(&req.target) {
             return Some(probe);
         }
     }
+
+    // Fall back to a generic HTTP probe in active mode to coax banners from
+    // services running on non-standard ports.
+    if matches!(req.mode, ScanMode::Active) {
+        return Some(Box::new(HttpProbe));
+    }
+
     None
 }
 
@@ -114,9 +121,7 @@ impl Prober for HttpProbe {
     }
 
     fn matches(&self, target: &Target) -> bool {
-        target.resolved.port() == 80
-            || target.resolved.port() == 8080
-            || target.resolved.port() == 8000
+        matches!(target.resolved.port(), 80 | 443 | 8000 | 8080 | 8443)
     }
 }
 
