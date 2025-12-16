@@ -66,8 +66,6 @@ impl Engine {
                     Err(_) => sink.emit_error(target, "overall timeout".to_string()).await,
                 }
             }));
-
-            self.limiter.sleep_jitter().await;
         }
 
         while tasks.next().await.is_some() {}
