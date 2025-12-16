@@ -1,3 +1,4 @@
+use crate::model::ScanMode;
 use crate::model::{Config, Fingerprint, ScanOutcome, Status, TcpMeta};
 use crate::probe::{probe_for_target, ProbeRequest};
 use crate::util::now_millis;
@@ -80,7 +81,28 @@ impl TargetProcessor for DefaultProcessor {
             match timeout(cfg.read_timeout, reader.read(&mut stream, None)).await {
                 Ok(Ok(bytes)) => banner_bytes = bytes,
                 Ok(Err(err)) => return Err(err),
-                Err(_) => return Ok(empty_outcome(target, Status::Timeout, tcp_meta)),
+                Err(_) => {
+                    // Passive scans can hang forever on silent services; fall back to
+                    // an active probe if available to coax a banner before timing out.
+                    let active_probe_req = ProbeRequest {
+                        target: target.clone(),
+                        mode: ScanMode::Active,
+                    };
+                    if let Some(probe) = probe_for_target(&active_probe_req) {
+                        match timeout(
+                            cfg.read_timeout,
+                            probe.execute(&mut stream, &mut banner_bytes, cfg.as_ref()),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(err)) => return Err(err),
+                            Err(_) => return Ok(empty_outcome(target, Status::Timeout, tcp_meta)),
+                        }
+                    } else {
+                        return Ok(empty_outcome(target, Status::Timeout, tcp_meta));
+                    }
+                }
             }
         }
 
