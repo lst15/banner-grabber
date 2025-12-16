@@ -1,9 +1,13 @@
 use crate::model::{Target, TargetSpec};
 use anyhow::Context;
+use futures::{stream::FuturesUnordered, StreamExt};
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::lookup_host;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Semaphore};
 use tokio_stream::wrappers::ReceiverStream;
+
+const FILE_RESOLUTION_CONCURRENCY: usize = 64;
 
 pub fn stream_targets(cfg: &crate::model::Config) -> anyhow::Result<ReceiverStream<Target>> {
     let (tx, rx) = mpsc::channel(256);
@@ -33,18 +37,48 @@ async fn read_file(path: String, tx: mpsc::Sender<Target>) -> anyhow::Result<()>
         .await
         .with_context(|| format!("cannot open input {}", path))?;
     let mut reader = BufReader::new(file).lines();
+    let sem = Arc::new(Semaphore::new(FILE_RESOLUTION_CONCURRENCY));
+    let mut tasks = FuturesUnordered::new();
+    let mut first_error: Option<anyhow::Error> = None;
     while let Some(line) = reader.next_line().await? {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
         if let Some(spec) = parse_target(trimmed) {
-            resolve_and_send(spec, tx.clone()).await?;
+            let tx = tx.clone();
+            let sem = sem.clone();
+            tasks.push(tokio::spawn(async move {
+                let permit = sem.acquire_owned().await?;
+                let _permit = permit;
+                resolve_and_send(spec, tx).await
+            }));
         } else {
             tracing::warn!(line = %trimmed, "skipping invalid target");
         }
     }
-    Ok(())
+
+    while let Some(res) = tasks.next().await {
+        match res {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                if first_error.is_none() {
+                    first_error = Some(err);
+                }
+            }
+            Err(join_err) => {
+                if first_error.is_none() {
+                    first_error = Some(join_err.into());
+                }
+            }
+        }
+    }
+
+    if let Some(err) = first_error {
+        Err(err)
+    } else {
+        Ok(())
+    }
 }
 
 fn parse_target(line: &str) -> Option<TargetSpec> {
