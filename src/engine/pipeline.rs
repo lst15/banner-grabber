@@ -66,9 +66,16 @@ impl TargetProcessor for DefaultProcessor {
 
         let mut banner_bytes = Vec::new();
         if let Some(probe) = probe {
-            probe
-                .execute(&mut stream, &mut banner_bytes, cfg.as_ref())
-                .await?;
+            match timeout(
+                cfg.read_timeout,
+                probe.execute(&mut stream, &mut banner_bytes, cfg.as_ref()),
+            )
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => return Err(err),
+                Err(_) => return Ok(empty_outcome(target, Status::Timeout, tcp_meta)),
+            }
         } else {
             match timeout(cfg.read_timeout, reader.read(&mut stream, None)).await {
                 Ok(Ok(bytes)) => banner_bytes = bytes,
