@@ -51,25 +51,27 @@ pub struct ProbeRequest {
     pub mode: ScanMode,
 }
 
-pub fn probe_for_target(req: &ProbeRequest) -> Option<Box<dyn Prober>> {
+static HTTP_PROBE: HttpProbe = HttpProbe;
+static REDIS_PROBE: RedisProbe = RedisProbe;
+static PROBES: [&dyn Prober; 2] = [&REDIS_PROBE, &HTTP_PROBE];
+
+pub fn probe_for_target(req: &ProbeRequest) -> Option<&'static dyn Prober> {
     if matches!(req.mode, ScanMode::Passive) {
         return None;
     }
 
-    let probes: Vec<Box<dyn Prober>> = vec![Box::new(RedisProbe), Box::new(HttpProbe)];
-    for probe in probes {
-        if probe.matches(&req.target) {
-            return Some(probe);
-        }
+    // Always reuse the same probe instances to avoid allocations on hot paths.
+    if let Some(probe) = PROBES
+        .iter()
+        .copied()
+        .find(|probe| probe.matches(&req.target))
+    {
+        return Some(probe);
     }
 
     // Fall back to a generic HTTP probe in active mode to coax banners from
     // services running on non-standard ports.
-    if matches!(req.mode, ScanMode::Active) {
-        return Some(Box::new(HttpProbe));
-    }
-
-    None
+    matches!(req.mode, ScanMode::Active).then_some(&HTTP_PROBE as &'static dyn Prober)
 }
 
 pub fn fingerprint(banner: &[u8]) -> Fingerprint {
