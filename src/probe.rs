@@ -77,6 +77,17 @@ pub fn probe_for_target(req: &ProbeRequest) -> Option<&'static dyn Prober> {
 pub fn fingerprint(banner: &[u8]) -> Fingerprint {
     let mut fields = BTreeMap::new();
     let text = String::from_utf8_lossy(banner).to_string();
+    let lower = text.to_lowercase();
+
+    if let Some(version) = tls_version(banner) {
+        fields.insert("hint".into(), "tls-handshake".into());
+        fields.insert("version".into(), version);
+        return Fingerprint {
+            protocol: Some("tls".into()),
+            score: 0.75,
+            fields,
+        };
+    }
 
     if text.starts_with("SSH-") {
         fields.insert("hint".into(), "ssh-like".into());
@@ -99,6 +110,22 @@ pub fn fingerprint(banner: &[u8]) -> Fingerprint {
         return Fingerprint {
             protocol: Some("redis".into()),
             score: 0.7,
+            fields,
+        };
+    }
+    if lower.starts_with("220") && lower.contains("smtp") {
+        fields.insert("hint".into(), "smtp".into());
+        return Fingerprint {
+            protocol: Some("smtp".into()),
+            score: 0.7,
+            fields,
+        };
+    }
+    if lower.starts_with("220") && lower.contains("ftp") {
+        fields.insert("hint".into(), "ftp".into());
+        return Fingerprint {
+            protocol: Some("ftp".into()),
+            score: 0.65,
             fields,
         };
     }
@@ -138,5 +165,43 @@ impl Prober for RedisProbe {
 
     fn matches(&self, target: &Target) -> bool {
         target.resolved.port() == 6379
+    }
+}
+
+fn tls_version(banner: &[u8]) -> Option<String> {
+    if banner.len() < 3 {
+        return None;
+    }
+
+    if banner[0] == 0x16 && banner[1] == 0x03 {
+        let major = banner[1];
+        let minor = banner[2];
+        return Some(format!("TLS {major}.{minor}"));
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fingerprints_tls() {
+        let banner = [0x16, 0x03, 0x04, 0x00, 0x20];
+        let fp = fingerprint(&banner);
+        assert_eq!(fp.protocol.as_deref(), Some("tls"));
+        assert_eq!(
+            fp.fields.get("version").map(|s| s.as_str()),
+            Some("TLS 3.4")
+        );
+    }
+
+    #[test]
+    fn fingerprints_smtp_and_ftp() {
+        let smtp_fp = fingerprint(b"220 mail.example.com ESMTP ready\r\n");
+        assert_eq!(smtp_fp.protocol.as_deref(), Some("smtp"));
+        let ftp_fp = fingerprint(b"220 FTP server ready\r\n");
+        assert_eq!(ftp_fp.protocol.as_deref(), Some("ftp"));
     }
 }
