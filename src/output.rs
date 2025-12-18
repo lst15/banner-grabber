@@ -21,9 +21,8 @@ enum OutputCommand {
 impl OutputSink {
     pub fn new(cfg: OutputConfig) -> anyhow::Result<Self> {
         let (tx, rx) = mpsc::channel(1024);
-        let cfg_clone = cfg.clone();
 
-        let handle = tokio::task::spawn_blocking(move || run_writer(cfg_clone, rx));
+        let handle = tokio::task::spawn_blocking(move || run_writer(cfg, rx));
 
         Ok(Self {
             inner: std::sync::Arc::new(OutputInner {
@@ -120,8 +119,6 @@ fn write_outcome(
             }
         }
     }
-
-    writer.flush()?;
     Ok(())
 }
 
