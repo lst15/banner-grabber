@@ -17,8 +17,9 @@ pub fn stream_targets(
     if let Some(spec) = cfg.target.clone() {
         let tx = tx.clone();
         tokio::spawn(async move {
-            if let Err(err) = resolve_and_send(spec, tx.clone()).await {
-                let _ = tx.send(Err(err)).await;
+            let tx_err = tx.clone();
+            if let Err(err) = resolve_and_send(spec, tx).await {
+                let _ = tx_err.send(Err(err)).await;
             }
         });
     }
@@ -26,9 +27,10 @@ pub fn stream_targets(
     if let Some(path) = cfg.input.clone() {
         let tx = tx.clone();
         tokio::spawn(async move {
-            if let Err(err) = read_file(path, tx.clone()).await {
+            let tx_err = tx.clone();
+            if let Err(err) = read_file(path, tx).await {
                 tracing::error!(error = %err, "failed to read input file");
-                let _ = tx.send(Err(err)).await;
+                let _ = tx_err.send(Err(err)).await;
             }
         });
     }
