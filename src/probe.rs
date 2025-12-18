@@ -20,8 +20,8 @@ pub trait Prober: Send + Sync {
     #[allow(dead_code)]
     fn fingerprint(&self, _banner: &[u8]) -> Fingerprint {
         Fingerprint {
-            protocol: Some(self.name().into()),
-            score: 0.7,
+            protocol: None,
+            score: 0.0,
             fields: Default::default(),
         }
     }
@@ -76,6 +76,7 @@ pub fn probe_for_target(req: &ProbeRequest) -> Option<&'static dyn Prober> {
 
 pub fn fingerprint(banner: &[u8]) -> Fingerprint {
     let mut fields = BTreeMap::new();
+    fields.insert("length".into(), banner.len().to_string());
     let text = String::from_utf8_lossy(banner).to_string();
     let lower = text.to_lowercase();
 
@@ -91,10 +92,23 @@ pub fn fingerprint(banner: &[u8]) -> Fingerprint {
         };
     }
 
-    if text.starts_with("SSH-") {
+    if let Some((proto_version, software)) = ssh_details(&text) {
         fields.insert("hint".into(), "ssh-like".into());
+        fields.insert("protocol_version".into(), proto_version);
+        if let Some(software) = software {
+            fields.insert("software".into(), software);
+        }
         return Fingerprint {
             protocol: Some("ssh".into()),
+            score: 0.9,
+            fields,
+        };
+    }
+    if let Some(version) = mysql_version(banner) {
+        fields.insert("hint".into(), "mysql-handshake".into());
+        fields.insert("version".into(), version);
+        return Fingerprint {
+            protocol: Some("mysql".into()),
             score: 0.9,
             fields,
         };
@@ -130,6 +144,10 @@ pub fn fingerprint(banner: &[u8]) -> Fingerprint {
             score: 0.65,
             fields,
         };
+    }
+
+    if let Some(error) = extract_error_line(&text) {
+        fields.insert("error".into(), error);
     }
 
     Fingerprint {
@@ -189,6 +207,56 @@ fn is_tls_handshake(banner: &[u8]) -> bool {
     banner.len() >= 3 && banner[0] == 0x16 && banner[1] == 0x03
 }
 
+fn ssh_details(text: &str) -> Option<(String, Option<String>)> {
+    let line = text.lines().next()?.trim();
+    if !line.starts_with("SSH-") {
+        return None;
+    }
+
+    let mut parts = line.splitn(3, '-');
+    let _ssh_tag = parts.next()?;
+    let proto_version = parts.next()?.to_string();
+    let software = parts.next().map(|s| s.to_string());
+
+    Some((proto_version, software))
+}
+
+fn mysql_version(banner: &[u8]) -> Option<String> {
+    if banner.len() < 6 {
+        return None;
+    }
+
+    let payload = banner.get(4..)?;
+    if payload.first().copied()? != 0x0a {
+        return None;
+    }
+
+    let version_bytes: Vec<u8> = payload
+        .iter()
+        .copied()
+        .skip(1)
+        .take_while(|b| *b != 0)
+        .collect();
+    if version_bytes.is_empty() {
+        return None;
+    }
+
+    String::from_utf8(version_bytes).ok()
+}
+
+fn extract_error_line(text: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .find(|line| {
+            let lower = line.to_ascii_lowercase();
+            !line.is_empty()
+                && (lower.contains("error")
+                    || lower.contains("denied")
+                    || lower.starts_with("-err"))
+        })
+        .map(|line| line.chars().take(160).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,5 +286,49 @@ mod tests {
         assert_eq!(smtp_fp.protocol.as_deref(), Some("smtp"));
         let ftp_fp = fingerprint(b"220 FTP server ready\r\n");
         assert_eq!(ftp_fp.protocol.as_deref(), Some("ftp"));
+    }
+
+    #[test]
+    fn fingerprints_mysql_handshake() {
+        let mut banner = vec![0x2c, 0x00, 0x00, 0x00, 0x0a];
+        banner.extend_from_slice(b"8.0.36\0");
+        let fp = fingerprint(&banner);
+        assert_eq!(fp.protocol.as_deref(), Some("mysql"));
+        assert_eq!(fp.fields.get("version").map(|s| s.as_str()), Some("8.0.36"));
+        let length = banner.len().to_string();
+        assert_eq!(
+            fp.fields.get("length").map(|s| s.as_str()),
+            Some(length.as_str())
+        );
+    }
+
+    #[test]
+    fn fingerprints_ssh_with_details() {
+        let fp = fingerprint(b"SSH-2.0-OpenSSH_9.3\r\n");
+        assert_eq!(fp.protocol.as_deref(), Some("ssh"));
+        assert_eq!(
+            fp.fields.get("protocol_version").map(|s| s.as_str()),
+            Some("2.0")
+        );
+        assert_eq!(
+            fp.fields.get("software").map(|s| s.as_str()),
+            Some("OpenSSH_9.3")
+        );
+    }
+
+    #[test]
+    fn fingerprints_error_banners() {
+        let banner = b"500 internal server error\r\n";
+        let fp = fingerprint(banner);
+        assert_eq!(fp.protocol, None);
+        assert_eq!(
+            fp.fields.get("error").map(|s| s.as_str()),
+            Some("500 internal server error")
+        );
+        let length = banner.len().to_string();
+        assert_eq!(
+            fp.fields.get("length").map(|s| s.as_str()),
+            Some(length.as_str())
+        );
     }
 }
