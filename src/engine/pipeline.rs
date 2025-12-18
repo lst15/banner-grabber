@@ -91,9 +91,9 @@ impl TargetProcessor for DefaultProcessor {
 
         let mut reader = BannerReader::new(cfg.max_bytes, cfg.read_timeout);
         let read_result = if let Some(probe) = probe {
-            match timeout(cfg.read_timeout, probe.execute(&mut stream, cfg.as_ref())).await {
-                Ok(Ok(result)) => result,
-                Ok(Err(err)) => {
+            match probe.execute(&mut stream, cfg.as_ref()).await {
+                Ok(result) => result,
+                Err(err) => {
                     return Ok(outcome_with_context(
                         target,
                         Status::Error,
@@ -103,21 +103,6 @@ impl TargetProcessor for DefaultProcessor {
                         Some(Diagnostics {
                             stage: "probe".into(),
                             message: err.to_string(),
-                        }),
-                        cfg.max_bytes,
-                        cfg.read_timeout,
-                    ))
-                }
-                Err(_) => {
-                    return Ok(outcome_with_context(
-                        target,
-                        Status::Timeout,
-                        tcp_meta,
-                        ReadStopReason::Timeout,
-                        Vec::new(),
-                        Some(Diagnostics {
-                            stage: "probe".into(),
-                            message: "read timeout".into(),
                         }),
                         cfg.max_bytes,
                         cfg.read_timeout,
@@ -125,9 +110,9 @@ impl TargetProcessor for DefaultProcessor {
                 }
             }
         } else {
-            match timeout(cfg.read_timeout, reader.read(&mut stream, None)).await {
-                Ok(Ok(result)) => result,
-                Ok(Err(err)) => {
+            match reader.read(&mut stream, None).await {
+                Ok(result) => result,
+                Err(err) => {
                     return Ok(outcome_with_context(
                         target,
                         Status::Error,
@@ -137,21 +122,6 @@ impl TargetProcessor for DefaultProcessor {
                         Some(Diagnostics {
                             stage: "banner-read".into(),
                             message: err.to_string(),
-                        }),
-                        cfg.max_bytes,
-                        cfg.read_timeout,
-                    ))
-                }
-                Err(_) => {
-                    return Ok(outcome_with_context(
-                        target,
-                        Status::Timeout,
-                        tcp_meta,
-                        ReadStopReason::Timeout,
-                        Vec::new(),
-                        Some(Diagnostics {
-                            stage: "banner-read".into(),
-                            message: "read timeout".into(),
                         }),
                         cfg.max_bytes,
                         cfg.read_timeout,
