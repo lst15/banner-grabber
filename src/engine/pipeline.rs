@@ -2,6 +2,7 @@ use crate::model::{Config, Diagnostics, ReadStopReason, ScanOutcome, Status, Tcp
 use crate::probe::{probe_for_target, ProbeRequest};
 use crate::util::now_millis;
 use async_trait::async_trait;
+use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tracing::debug;
@@ -58,6 +59,7 @@ impl TargetProcessor for DefaultProcessor {
                         message: err.to_string(),
                     }),
                     cfg.max_bytes,
+                    cfg.read_timeout,
                 ));
             }
             Err(_) => {
@@ -75,6 +77,7 @@ impl TargetProcessor for DefaultProcessor {
                         message: "connect timeout".into(),
                     }),
                     cfg.max_bytes,
+                    cfg.read_timeout,
                 ));
             }
         };
@@ -86,11 +89,11 @@ impl TargetProcessor for DefaultProcessor {
         };
         let probe = probe_for_target(&probe_req);
 
-        let mut reader = BannerReader::new(cfg.max_bytes);
+        let mut reader = BannerReader::new(cfg.max_bytes, cfg.read_timeout);
         let read_result = if let Some(probe) = probe {
-            match timeout(cfg.read_timeout, probe.execute(&mut stream, cfg.as_ref())).await {
-                Ok(Ok(result)) => result,
-                Ok(Err(err)) => {
+            match probe.execute(&mut stream, cfg.as_ref()).await {
+                Ok(result) => result,
+                Err(err) => {
                     return Ok(outcome_with_context(
                         target,
                         Status::Error,
@@ -102,27 +105,14 @@ impl TargetProcessor for DefaultProcessor {
                             message: err.to_string(),
                         }),
                         cfg.max_bytes,
-                    ))
-                }
-                Err(_) => {
-                    return Ok(outcome_with_context(
-                        target,
-                        Status::Timeout,
-                        tcp_meta,
-                        ReadStopReason::Timeout,
-                        Vec::new(),
-                        Some(Diagnostics {
-                            stage: "probe".into(),
-                            message: "read timeout".into(),
-                        }),
-                        cfg.max_bytes,
+                        cfg.read_timeout,
                     ))
                 }
             }
         } else {
-            match timeout(cfg.read_timeout, reader.read(&mut stream, None)).await {
-                Ok(Ok(result)) => result,
-                Ok(Err(err)) => {
+            match reader.read(&mut stream, None).await {
+                Ok(result) => result,
+                Err(err) => {
                     return Ok(outcome_with_context(
                         target,
                         Status::Error,
@@ -134,20 +124,7 @@ impl TargetProcessor for DefaultProcessor {
                             message: err.to_string(),
                         }),
                         cfg.max_bytes,
-                    ))
-                }
-                Err(_) => {
-                    return Ok(outcome_with_context(
-                        target,
-                        Status::Timeout,
-                        tcp_meta,
-                        ReadStopReason::Timeout,
-                        Vec::new(),
-                        Some(Diagnostics {
-                            stage: "banner-read".into(),
-                            message: "read timeout".into(),
-                        }),
-                        cfg.max_bytes,
+                        cfg.read_timeout,
                     ))
                 }
             }
@@ -177,13 +154,14 @@ fn outcome_with_context(
     bytes: Vec<u8>,
     diagnostics: Option<Diagnostics>,
     max_bytes: usize,
+    idle_timeout: Duration,
 ) -> ScanOutcome {
     let read_result = super::reader::ReadResult {
         truncated: matches!(reason, ReadStopReason::SizeLimit) || bytes.len() >= max_bytes,
         bytes,
         reason: reason.clone(),
     };
-    let banner = BannerReader::new(max_bytes).render(read_result.clone());
+    let banner = BannerReader::new(max_bytes, idle_timeout).render(read_result.clone());
     let fingerprint = crate::probe::fingerprint(&read_result);
     ScanOutcome {
         target: target.view(),

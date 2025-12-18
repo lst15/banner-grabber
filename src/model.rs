@@ -109,7 +109,7 @@ pub enum Status {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub enum ReadStopReason {
     #[default]
     NotStarted,
