@@ -42,7 +42,7 @@ impl Engine {
 
     #[instrument(skip(self))]
     pub async fn run(&mut self) -> anyhow::Result<()> {
-        let mut stream = crate::input::stream_targets(self.cfg.as_ref())?;
+        let (mut stream, sources) = crate::input::stream_targets(self.cfg.as_ref()).await?;
         let mut tasks = FuturesUnordered::new();
 
         while let Some(target) = stream.next().await {
@@ -69,6 +69,6 @@ impl Engine {
         }
 
         while tasks.next().await.is_some() {}
-        Ok(())
+        sources.wait().await
     }
 }
