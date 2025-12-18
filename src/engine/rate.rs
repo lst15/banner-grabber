@@ -1,14 +1,12 @@
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::task::yield_now;
-use tokio::time::{sleep, Instant};
+use tokio::time::{sleep_until, Instant};
 
 #[derive(Clone)]
 pub struct RateLimiter {
     state: Arc<tokio::sync::Mutex<State>>,
     fill_rate: f64,
     capacity: f64,
-    max_sleep: Duration,
 }
 
 struct State {
@@ -26,13 +24,12 @@ impl RateLimiter {
             })),
             capacity: fill_rate,
             fill_rate,
-            max_sleep: Duration::from_millis(100),
         }
     }
 
     pub async fn acquire(&self) {
         loop {
-            let sleep_for = {
+            let wait_until = {
                 let mut state = self.state.lock().await;
                 let now = Instant::now();
                 let elapsed = now.duration_since(state.last_refill);
@@ -46,18 +43,20 @@ impl RateLimiter {
 
                 if state.tokens >= 1.0 {
                     state.tokens -= 1.0;
-                    return;
+                    None
+                } else {
+                    let missing = 1.0 - state.tokens;
+                    let wait_seconds = missing / self.fill_rate;
+                    state.last_refill = now;
+                    Some(now + Duration::from_secs_f64(wait_seconds))
                 }
-
-                let missing = 1.0 - state.tokens;
-                let wait_seconds = missing / self.fill_rate;
-                Duration::from_secs_f64(wait_seconds).min(self.max_sleep)
             };
 
-            if sleep_for.is_zero() {
-                yield_now().await;
-            } else {
-                sleep(sleep_for).await;
+            match wait_until {
+                None => return,
+                Some(when) => {
+                    sleep_until(when).await;
+                }
             }
         }
     }
