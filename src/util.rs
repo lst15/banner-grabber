@@ -1,11 +1,7 @@
 pub mod hex;
 
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
-
-pub fn duration_from_millis(ms: u64) -> Duration {
-    Duration::from_millis(ms)
-}
+use std::time::Instant;
 
 pub fn sanitize_text(bytes: &[u8]) -> String {
     bytes

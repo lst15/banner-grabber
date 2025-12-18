@@ -7,7 +7,7 @@ async fn reader_handles_delayed_banner() {
     let mut reader = BannerReader::new(32);
     let mut data: &[u8] = b"hello\r\n";
     let banner = reader.read(&mut data, None).await.unwrap();
-    assert_eq!(banner, b"hello\r\n");
+    assert_eq!(banner.bytes, b"hello\r\n");
 }
 
 #[tokio::test]
@@ -88,21 +88,22 @@ async fn http_probe_runs_on_nonstandard_ports() {
 }
 
 #[tokio::test]
-async fn passive_mode_falls_back_to_http_probe_on_timeout() {
+async fn passive_mode_does_not_send_active_probe_on_timeout() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
     tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
-        let mut buf = [0u8; 256];
-        socket.readable().await.unwrap();
-        let n = socket.read(&mut buf).await.unwrap();
-        let request = std::str::from_utf8(&buf[..n]).unwrap();
-        assert!(request.starts_with("GET / HTTP/1.0"));
-        socket
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
-            .await
-            .unwrap();
+        let mut buf = [0u8; 16];
+        let read = tokio::time::timeout(std::time::Duration::from_millis(1500), async {
+            socket.read(&mut buf).await.unwrap()
+        })
+        .await;
+        match read {
+            Ok(0) => {}
+            Ok(n) => panic!("unexpected data from client: {} bytes", n),
+            Err(_) => panic!("client never closed connection"),
+        }
     });
 
     let cfg = banner_grabber::model::Config {
@@ -114,8 +115,8 @@ async fn passive_mode_falls_back_to_http_probe_on_timeout() {
         concurrency: 1,
         rate: 1,
         connect_timeout: std::time::Duration::from_millis(500),
-        read_timeout: std::time::Duration::from_millis(1000),
-        overall_timeout: std::time::Duration::from_millis(1500),
+        read_timeout: std::time::Duration::from_millis(300),
+        overall_timeout: std::time::Duration::from_millis(700),
         max_bytes: 128,
         mode: banner_grabber::model::ScanMode::Passive,
         output: banner_grabber::model::OutputConfig {

@@ -64,6 +64,8 @@ pub struct ScanOutcome {
     pub tcp: TcpMeta,
     pub banner: Banner,
     pub fingerprint: Fingerprint,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<Diagnostics>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,11 +81,18 @@ pub struct TcpMeta {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Banner {
     pub raw_hex: String,
     pub printable: String,
     pub truncated: bool,
+    pub read_reason: ReadStopReason,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Diagnostics {
+    pub stage: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +107,16 @@ pub enum Status {
     Open,
     Timeout,
     Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub enum ReadStopReason {
+    #[default]
+    NotStarted,
+    ConnectionClosed,
+    Delimiter,
+    SizeLimit,
+    Timeout,
 }
 
 impl Target {

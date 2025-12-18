@@ -45,7 +45,11 @@ impl Engine {
         let mut stream = crate::input::stream_targets(self.cfg.as_ref())?;
         let mut tasks = FuturesUnordered::new();
 
-        while let Some(target) = stream.next().await {
+        while let Some(next) = stream.next().await {
+            let target = match next {
+                Ok(target) => target,
+                Err(err) => return Err(err),
+            };
             self.limiter.acquire().await;
             let permit = self.sem.clone().acquire_owned().await?;
             let cfg = self.cfg.clone();
@@ -59,16 +63,20 @@ impl Engine {
                 )
                 .await;
                 match res {
-                    Ok(Ok(outcome)) => sink.emit(outcome).await,
-                    Ok(Err(err)) => {
-                        sink.emit_error(target, err.to_string()).await;
+                    Ok(Ok(outcome)) => sink.emit(outcome).await?,
+                    Ok(Err(err)) => sink.emit_error(target, err.to_string()).await?,
+                    Err(_) => {
+                        sink.emit_error(target, "overall timeout".to_string())
+                            .await?
                     }
-                    Err(_) => sink.emit_error(target, "overall timeout".to_string()).await,
                 }
+                Ok::<_, anyhow::Error>(())
             }));
         }
 
-        while tasks.next().await.is_some() {}
+        while let Some(joined) = tasks.next().await {
+            joined??;
+        }
         self.sink.shutdown().await?;
         Ok(())
     }
