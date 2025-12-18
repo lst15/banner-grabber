@@ -79,9 +79,11 @@ pub fn fingerprint(banner: &[u8]) -> Fingerprint {
     let text = String::from_utf8_lossy(banner).to_string();
     let lower = text.to_lowercase();
 
-    if let Some(version) = tls_version(banner) {
+    if is_tls_handshake(banner) {
         fields.insert("hint".into(), "tls-handshake".into());
-        fields.insert("version".into(), version);
+        if let Some(version) = tls_version(banner) {
+            fields.insert("version".into(), version);
+        }
         return Fingerprint {
             protocol: Some("tls".into()),
             score: 0.75,
@@ -169,17 +171,22 @@ impl Prober for RedisProbe {
 }
 
 fn tls_version(banner: &[u8]) -> Option<String> {
-    if banner.len() < 3 {
+    if !is_tls_handshake(banner) {
         return None;
     }
 
-    if banner[0] == 0x16 && banner[1] == 0x03 {
-        let major = banner[1];
-        let minor = banner[2];
-        return Some(format!("TLS {major}.{minor}"));
+    match banner[2] {
+        0x00 => Some("SSL 3.0".into()),
+        0x01 => Some("TLS 1.0".into()),
+        0x02 => Some("TLS 1.1".into()),
+        0x03 => Some("TLS 1.2".into()),
+        0x04 => Some("TLS 1.3".into()),
+        _ => None,
     }
+}
 
-    None
+fn is_tls_handshake(banner: &[u8]) -> bool {
+    banner.len() >= 3 && banner[0] == 0x16 && banner[1] == 0x03
 }
 
 #[cfg(test)]
@@ -193,8 +200,16 @@ mod tests {
         assert_eq!(fp.protocol.as_deref(), Some("tls"));
         assert_eq!(
             fp.fields.get("version").map(|s| s.as_str()),
-            Some("TLS 3.4")
+            Some("TLS 1.3")
         );
+    }
+
+    #[test]
+    fn fingerprints_tls_without_known_version() {
+        let banner = [0x16, 0x03, 0x05, 0x00, 0x20];
+        let fp = fingerprint(&banner);
+        assert_eq!(fp.protocol.as_deref(), Some("tls"));
+        assert!(fp.fields.get("version").is_none());
     }
 
     #[test]
