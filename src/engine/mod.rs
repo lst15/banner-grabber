@@ -6,11 +6,12 @@ use crate::model::Config;
 use crate::output::OutputSink;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use anyhow::Error;
 use pipeline::{DefaultProcessor, TargetProcessor};
 use rate::RateLimiter;
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
-use tracing::instrument;
+use tracing::{error, instrument};
 
 pub struct Engine {
     cfg: std::sync::Arc<Config>,
@@ -68,7 +69,17 @@ impl Engine {
             }));
         }
 
-        while tasks.next().await.is_some() {}
+        let mut join_error: Option<Error> = None;
+        while let Some(res) = tasks.next().await {
+            if let Err(err) = res {
+                error!(task_error = %err, "task join failed");
+                join_error.get_or_insert_with(|| err.into());
+            }
+        }
+
+        if let Some(err) = join_error {
+            return Err(err);
+        }
         Ok(())
     }
 }
