@@ -69,6 +69,7 @@ impl Engine {
         }
 
         while tasks.next().await.is_some() {}
+        self.sink.shutdown().await?;
         Ok(())
     }
 }

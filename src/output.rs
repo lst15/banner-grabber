@@ -10,7 +10,8 @@ pub struct OutputSink {
 }
 
 struct OutputInner {
-    tx: mpsc::UnboundedSender<OutputCommand>,
+    tx: tokio::sync::Mutex<Option<mpsc::UnboundedSender<OutputCommand>>>,
+    handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 enum OutputCommand {
@@ -22,15 +23,23 @@ impl OutputSink {
         let (tx, rx) = mpsc::unbounded_channel();
         let cfg_clone = cfg.clone();
 
-        tokio::task::spawn_blocking(move || run_writer(cfg_clone, rx));
+        let handle = tokio::task::spawn_blocking(move || run_writer(cfg_clone, rx));
 
         Ok(Self {
-            inner: std::sync::Arc::new(OutputInner { tx }),
+            inner: std::sync::Arc::new(OutputInner {
+                tx: tokio::sync::Mutex::new(Some(tx)),
+                handle: tokio::sync::Mutex::new(Some(handle)),
+            }),
         })
     }
 
     pub async fn emit(&self, outcome: ScanOutcome) {
-        if self.inner.tx.send(OutputCommand::Emit(outcome)).is_err() {
+        let guard = self.inner.tx.lock().await;
+        if let Some(tx) = guard.as_ref() {
+            if tx.send(OutputCommand::Emit(outcome)).is_err() {
+                eprintln!("output worker not available; dropping scan outcome");
+            }
+        } else {
             eprintln!("output worker not available; dropping scan outcome");
         }
     }
@@ -56,6 +65,18 @@ impl OutputSink {
             },
         };
         self.emit(outcome).await;
+    }
+
+    pub async fn shutdown(&self) -> anyhow::Result<()> {
+        self.inner.tx.lock().await.take();
+
+        if let Some(handle) = self.inner.handle.lock().await.take() {
+            handle
+                .await
+                .map_err(|err| anyhow::anyhow!("failed to join output worker: {err}"))?;
+        }
+
+        Ok(())
     }
 }
 
