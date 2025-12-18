@@ -1,6 +1,7 @@
 pub mod hex;
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 pub fn duration_from_millis(ms: u64) -> Duration {
     Duration::from_millis(ms)
@@ -19,8 +20,7 @@ pub fn sanitize_text(bytes: &[u8]) -> String {
 }
 
 pub fn now_millis() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis()
+    static START: OnceLock<Instant> = OnceLock::new();
+    let start = START.get_or_init(Instant::now);
+    Instant::now().duration_since(*start).as_millis()
 }
