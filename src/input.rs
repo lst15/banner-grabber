@@ -9,21 +9,26 @@ use tokio_stream::wrappers::ReceiverStream;
 
 const FILE_RESOLUTION_CONCURRENCY: usize = 64;
 
-pub fn stream_targets(cfg: &crate::model::Config) -> anyhow::Result<ReceiverStream<Target>> {
+pub fn stream_targets(
+    cfg: &crate::model::Config,
+) -> anyhow::Result<ReceiverStream<anyhow::Result<Target>>> {
     let (tx, rx) = mpsc::channel(256);
 
     if let Some(spec) = cfg.target.clone() {
         let tx = tx.clone();
         tokio::spawn(async move {
-            let _ = resolve_and_send(spec, tx).await;
+            if let Err(err) = resolve_and_send(spec, tx.clone()).await {
+                let _ = tx.send(Err(err)).await;
+            }
         });
     }
 
     if let Some(path) = cfg.input.clone() {
         let tx = tx.clone();
         tokio::spawn(async move {
-            if let Err(err) = read_file(path, tx).await {
+            if let Err(err) = read_file(path, tx.clone()).await {
                 tracing::error!(error = %err, "failed to read input file");
+                let _ = tx.send(Err(err)).await;
             }
         });
     }
@@ -32,7 +37,7 @@ pub fn stream_targets(cfg: &crate::model::Config) -> anyhow::Result<ReceiverStre
     Ok(ReceiverStream::new(rx))
 }
 
-async fn read_file(path: String, tx: mpsc::Sender<Target>) -> anyhow::Result<()> {
+async fn read_file(path: String, tx: mpsc::Sender<anyhow::Result<Target>>) -> anyhow::Result<()> {
     let file = tokio::fs::File::open(&path)
         .await
         .with_context(|| format!("cannot open input {}", path))?;
@@ -96,14 +101,17 @@ fn parse_target(line: &str) -> Option<TargetSpec> {
     None
 }
 
-async fn resolve_and_send(spec: TargetSpec, tx: mpsc::Sender<Target>) -> anyhow::Result<()> {
+async fn resolve_and_send(
+    spec: TargetSpec,
+    tx: mpsc::Sender<anyhow::Result<Target>>,
+) -> anyhow::Result<()> {
     let lookup = lookup_host((spec.host.as_str(), spec.port)).await?;
     for addr in lookup {
         let target = Target {
             original: spec.clone(),
             resolved: addr,
         };
-        tx.send(target).await.ok();
+        tx.send(Ok(target)).await.ok();
     }
     Ok(())
 }

@@ -10,7 +10,7 @@ pub struct OutputSink {
 }
 
 struct OutputInner {
-    tx: tokio::sync::Mutex<Option<mpsc::UnboundedSender<OutputCommand>>>,
+    tx: tokio::sync::Mutex<Option<mpsc::Sender<OutputCommand>>>,
     handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
@@ -20,7 +20,7 @@ enum OutputCommand {
 
 impl OutputSink {
     pub fn new(cfg: OutputConfig) -> anyhow::Result<Self> {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(1024);
         let cfg_clone = cfg.clone();
 
         let handle = tokio::task::spawn_blocking(move || run_writer(cfg_clone, rx));
@@ -33,18 +33,19 @@ impl OutputSink {
         })
     }
 
-    pub async fn emit(&self, outcome: ScanOutcome) {
+    pub async fn emit(&self, outcome: ScanOutcome) -> anyhow::Result<()> {
         let guard = self.inner.tx.lock().await;
         if let Some(tx) = guard.as_ref() {
-            if tx.send(OutputCommand::Emit(outcome)).is_err() {
-                eprintln!("output worker not available; dropping scan outcome");
-            }
+            tx.send(OutputCommand::Emit(outcome))
+                .await
+                .map_err(|err| anyhow::anyhow!("output worker not available: {err}"))?
         } else {
-            eprintln!("output worker not available; dropping scan outcome");
+            anyhow::bail!("output worker not available; dropping scan outcome");
         }
+        Ok(())
     }
 
-    pub async fn emit_error(&self, target: Target, error: String) {
+    pub async fn emit_error(&self, target: Target, error: String) -> anyhow::Result<()> {
         let view = target.view();
         let outcome = ScanOutcome {
             target: view,
@@ -53,18 +54,18 @@ impl OutputSink {
                 connect_ms: None,
                 error: Some(error.clone()),
             },
-            banner: Banner {
-                raw_hex: String::new(),
-                printable: String::new(),
-                truncated: false,
-            },
+            banner: Banner::default(),
             fingerprint: Fingerprint {
                 protocol: None,
                 score: 0.0,
                 fields: Default::default(),
             },
+            diagnostics: Some(crate::model::Diagnostics {
+                stage: "pipeline".into(),
+                message: error,
+            }),
         };
-        self.emit(outcome).await;
+        self.emit(outcome).await
     }
 
     pub async fn shutdown(&self) -> anyhow::Result<()> {
@@ -80,7 +81,7 @@ impl OutputSink {
     }
 }
 
-fn run_writer(cfg: OutputConfig, mut rx: mpsc::UnboundedReceiver<OutputCommand>) {
+fn run_writer(cfg: OutputConfig, mut rx: mpsc::Receiver<OutputCommand>) {
     let stdout = std::io::stdout();
     let mut writer = BufWriter::new(stdout);
 
@@ -114,6 +115,9 @@ fn write_outcome(
                 outcome.status_text()
             )?;
             writeln!(writer, "  banner: {}", outcome.banner.printable)?;
+            if let Some(diag) = &outcome.diagnostics {
+                writeln!(writer, "  diagnostics: [{}] {}", diag.stage, diag.message)?;
+            }
         }
     }
 

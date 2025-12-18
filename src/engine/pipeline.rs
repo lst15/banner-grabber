@@ -1,5 +1,4 @@
-use crate::model::ScanMode;
-use crate::model::{Config, Fingerprint, ScanOutcome, Status, TcpMeta};
+use crate::model::{Config, Diagnostics, ReadStopReason, ScanOutcome, Status, TcpMeta};
 use crate::probe::{probe_for_target, ProbeRequest};
 use crate::util::now_millis;
 use async_trait::async_trait;
@@ -33,7 +32,7 @@ impl TargetProcessor for DefaultProcessor {
         let connect_result =
             timeout(cfg.connect_timeout, TcpStream::connect(target.resolved)).await;
 
-        let (mut stream, tcp_meta, status) = match connect_result {
+        let (mut stream, tcp_meta) = match connect_result {
             Ok(Ok(stream)) => {
                 let elapsed = now_millis() - tcp_start;
                 (
@@ -42,22 +41,44 @@ impl TargetProcessor for DefaultProcessor {
                         connect_ms: Some(elapsed),
                         error: None,
                     },
-                    Status::Open,
                 )
             }
             Ok(Err(err)) => {
-                return Err(err.into());
+                return Ok(outcome_with_context(
+                    target,
+                    Status::Error,
+                    TcpMeta {
+                        connect_ms: None,
+                        error: Some(err.to_string()),
+                    },
+                    ReadStopReason::NotStarted,
+                    Vec::new(),
+                    Some(Diagnostics {
+                        stage: "connect".into(),
+                        message: err.to_string(),
+                    }),
+                    cfg.max_bytes,
+                ));
             }
             Err(_) => {
-                let meta = TcpMeta {
-                    connect_ms: None,
-                    error: Some("connect timeout".into()),
-                };
-                return Ok(empty_outcome(target, Status::Timeout, meta));
+                return Ok(outcome_with_context(
+                    target,
+                    Status::Timeout,
+                    TcpMeta {
+                        connect_ms: None,
+                        error: Some("connect timeout".into()),
+                    },
+                    ReadStopReason::Timeout,
+                    Vec::new(),
+                    Some(Diagnostics {
+                        stage: "connect".into(),
+                        message: "connect timeout".into(),
+                    }),
+                    cfg.max_bytes,
+                ));
             }
         };
-
-        let mut reader = BannerReader::new(cfg.max_bytes);
+        let status = Status::Open;
 
         let probe_req = ProbeRequest {
             target: target.clone(),
@@ -65,57 +86,75 @@ impl TargetProcessor for DefaultProcessor {
         };
         let probe = probe_for_target(&probe_req);
 
-        let mut banner_bytes = Vec::new();
-        if let Some(probe) = probe {
-            match timeout(
-                cfg.read_timeout,
-                probe.execute(&mut stream, &mut banner_bytes, cfg.as_ref()),
-            )
-            .await
-            {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => return Err(err),
-                Err(_) => return Ok(empty_outcome(target, Status::Timeout, tcp_meta)),
+        let mut reader = BannerReader::new(cfg.max_bytes);
+        let read_result = if let Some(probe) = probe {
+            match timeout(cfg.read_timeout, probe.execute(&mut stream, cfg.as_ref())).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(err)) => {
+                    return Ok(outcome_with_context(
+                        target,
+                        Status::Error,
+                        tcp_meta,
+                        ReadStopReason::NotStarted,
+                        Vec::new(),
+                        Some(Diagnostics {
+                            stage: "probe".into(),
+                            message: err.to_string(),
+                        }),
+                        cfg.max_bytes,
+                    ))
+                }
+                Err(_) => {
+                    return Ok(outcome_with_context(
+                        target,
+                        Status::Timeout,
+                        tcp_meta,
+                        ReadStopReason::Timeout,
+                        Vec::new(),
+                        Some(Diagnostics {
+                            stage: "probe".into(),
+                            message: "read timeout".into(),
+                        }),
+                        cfg.max_bytes,
+                    ))
+                }
             }
         } else {
             match timeout(cfg.read_timeout, reader.read(&mut stream, None)).await {
-                Ok(Ok(bytes)) => banner_bytes = bytes,
-                Ok(Err(err)) => return Err(err),
+                Ok(Ok(result)) => result,
+                Ok(Err(err)) => {
+                    return Ok(outcome_with_context(
+                        target,
+                        Status::Error,
+                        tcp_meta,
+                        ReadStopReason::NotStarted,
+                        Vec::new(),
+                        Some(Diagnostics {
+                            stage: "banner-read".into(),
+                            message: err.to_string(),
+                        }),
+                        cfg.max_bytes,
+                    ))
+                }
                 Err(_) => {
-                    // Passive scans can hang forever on silent services; fall back to
-                    // an active probe if available to coax a banner before timing out.
-                    let active_probe_req = ProbeRequest {
-                        target: target.clone(),
-                        mode: ScanMode::Active,
-                    };
-                    if let Some(probe) = probe_for_target(&active_probe_req) {
-                        match timeout(
-                            cfg.read_timeout,
-                            probe.execute(&mut stream, &mut banner_bytes, cfg.as_ref()),
-                        )
-                        .await
-                        {
-                            Ok(Ok(())) => {}
-                            Ok(Err(err)) => return Err(err),
-                            Err(_) => return Ok(empty_outcome(target, Status::Timeout, tcp_meta)),
-                        }
-                    } else {
-                        return Ok(empty_outcome(target, Status::Timeout, tcp_meta));
-                    }
+                    return Ok(outcome_with_context(
+                        target,
+                        Status::Timeout,
+                        tcp_meta,
+                        ReadStopReason::Timeout,
+                        Vec::new(),
+                        Some(Diagnostics {
+                            stage: "banner-read".into(),
+                            message: "read timeout".into(),
+                        }),
+                        cfg.max_bytes,
+                    ))
                 }
             }
-        }
+        };
 
-        if banner_bytes.is_empty() {
-            match timeout(cfg.read_timeout, reader.read(&mut stream, None)).await {
-                Ok(Ok(bytes)) => banner_bytes = bytes,
-                Ok(Err(err)) => return Err(err),
-                Err(_) => return Ok(empty_outcome(target, Status::Timeout, tcp_meta)),
-            }
-        }
-
-        let fingerprint = crate::probe::fingerprint(&banner_bytes);
-        let banner = reader.render(banner_bytes);
+        let fingerprint = crate::probe::fingerprint(&read_result);
+        let banner = reader.render(read_result);
         let total = now_millis() - start;
         debug!(target = %target.resolved, ms = total, "processed target");
 
@@ -125,24 +164,33 @@ impl TargetProcessor for DefaultProcessor {
             tcp: tcp_meta,
             banner,
             fingerprint,
+            diagnostics: None,
         })
     }
 }
 
-fn empty_outcome(target: crate::model::Target, status: Status, tcp: TcpMeta) -> ScanOutcome {
+fn outcome_with_context(
+    target: crate::model::Target,
+    status: Status,
+    tcp: TcpMeta,
+    reason: ReadStopReason,
+    bytes: Vec<u8>,
+    diagnostics: Option<Diagnostics>,
+    max_bytes: usize,
+) -> ScanOutcome {
+    let read_result = super::reader::ReadResult {
+        truncated: matches!(reason, ReadStopReason::SizeLimit) || bytes.len() >= max_bytes,
+        bytes,
+        reason: reason.clone(),
+    };
+    let banner = BannerReader::new(max_bytes).render(read_result.clone());
+    let fingerprint = crate::probe::fingerprint(&read_result);
     ScanOutcome {
         target: target.view(),
         status,
         tcp,
-        banner: crate::model::Banner {
-            raw_hex: String::new(),
-            printable: String::new(),
-            truncated: false,
-        },
-        fingerprint: Fingerprint {
-            protocol: None,
-            score: 0.0,
-            fields: Default::default(),
-        },
+        banner,
+        fingerprint,
+        diagnostics,
     }
 }

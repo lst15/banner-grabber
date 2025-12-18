@@ -1,4 +1,4 @@
-use crate::model::Banner;
+use crate::model::{Banner, ReadStopReason};
 use tokio::io::AsyncReadExt;
 
 pub struct BannerReader {
@@ -14,9 +14,10 @@ impl BannerReader {
         &mut self,
         stream: &mut T,
         extra_delimiter: Option<&[u8]>,
-    ) -> anyhow::Result<Vec<u8>> {
+    ) -> anyhow::Result<ReadResult> {
         let mut buf = vec![0u8; self.max_bytes];
         let mut total = 0usize;
+        let mut reason = ReadStopReason::ConnectionClosed;
         loop {
             let n = stream.read(&mut buf[total..]).await?;
             if n == 0 {
@@ -24,27 +25,40 @@ impl BannerReader {
             }
             total += n;
             if total >= self.max_bytes {
+                reason = ReadStopReason::SizeLimit;
                 break;
             }
             if let Some(pos) = find_delimiter(&buf[..total], extra_delimiter) {
                 total = pos;
+                reason = ReadStopReason::Delimiter;
                 break;
             }
         }
         buf.truncate(total);
-        Ok(buf)
+        Ok(ReadResult {
+            bytes: buf,
+            reason,
+            truncated: total >= self.max_bytes,
+        })
     }
 
-    pub fn render(&self, bytes: Vec<u8>) -> Banner {
-        let truncated = bytes.len() >= self.max_bytes;
-        let raw_hex = crate::util::hex::to_hex(&bytes);
-        let printable = crate::util::sanitize_text(&bytes);
+    pub fn render(&self, result: ReadResult) -> Banner {
+        let raw_hex = crate::util::hex::to_hex(&result.bytes);
+        let printable = crate::util::sanitize_text(&result.bytes);
         Banner {
             raw_hex,
             printable,
-            truncated,
+            truncated: result.truncated,
+            read_reason: result.reason,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ReadResult {
+    pub bytes: Vec<u8>,
+    pub reason: ReadStopReason,
+    pub truncated: bool,
 }
 
 fn find_delimiter(buf: &[u8], extra: Option<&[u8]>) -> Option<usize> {
@@ -77,7 +91,7 @@ mod tests {
         let mut reader = BannerReader::new(64);
         let mut data: &[u8] = b"HTTP/1.1 200 OK\r\n\r\nBody";
         let res = reader.read(&mut data, None).await.unwrap();
-        assert!(res.ends_with(b"\r\n\r\n"));
+        assert!(res.bytes.ends_with(b"\r\n\r\n"));
     }
 
     #[tokio::test]
@@ -85,7 +99,7 @@ mod tests {
         let mut reader = BannerReader::new(64);
         let mut data: &[u8] = b"VTUN server ver 3.X 12/31/2013\n...";
         let res = reader.read(&mut data, None).await.unwrap();
-        assert!(res.ends_with(b"\n"));
-        assert_eq!(res, b"VTUN server ver 3.X 12/31/2013\n");
+        assert!(res.bytes.ends_with(b"\n"));
+        assert_eq!(res.bytes, b"VTUN server ver 3.X 12/31/2013\n");
     }
 }

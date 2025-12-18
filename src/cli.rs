@@ -1,7 +1,7 @@
 use crate::model::OutputFormat;
-use crate::util::duration_from_millis;
 use clap::{ArgAction, Parser, ValueEnum};
 use std::fmt;
+use std::time::Duration;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Async banner grabbing tool", long_about = None)]
@@ -76,6 +76,18 @@ impl Cli {
             anyhow::bail!("either --host/--port or --input is required");
         }
 
+        if self.host.is_some() && self.input.is_some() {
+            anyhow::bail!("--host/--port and --input are mutually exclusive");
+        }
+
+        if self.concurrency == 0 {
+            anyhow::bail!("concurrency must be greater than zero");
+        }
+
+        if self.rate == 0 {
+            anyhow::bail!("rate must be greater than zero");
+        }
+
         let target = match (self.host, self.port) {
             (Some(h), Some(p)) => Some(crate::model::TargetSpec { host: h, port: p }),
             (None, None) => None,
@@ -85,11 +97,11 @@ impl Cli {
         Ok(crate::model::Config {
             target,
             input: self.input,
-            concurrency: self.concurrency.max(1),
-            rate: self.rate.max(1),
-            connect_timeout: duration_from_millis(self.connect_timeout_ms),
-            read_timeout: duration_from_millis(self.read_timeout_ms),
-            overall_timeout: duration_from_millis(self.overall_timeout_ms),
+            concurrency: self.concurrency,
+            rate: self.rate,
+            connect_timeout: Duration::from_millis(self.connect_timeout_ms),
+            read_timeout: Duration::from_millis(self.read_timeout_ms),
+            overall_timeout: Duration::from_millis(self.overall_timeout_ms),
             max_bytes: self.max_bytes.max(1),
             mode: match self.mode {
                 Mode::Passive => crate::model::ScanMode::Passive,
