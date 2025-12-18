@@ -34,7 +34,7 @@ pub trait Prober: Send + Sync {
                 .with_context(|| format!("failed to write probe {}", self.name()))?;
         }
 
-        let mut reader = BannerReader::new(cfg.max_bytes);
+        let mut reader = BannerReader::new(cfg.max_bytes, cfg.read_timeout);
         reader.read(stream, self.expected_delimiter()).await
     }
 }

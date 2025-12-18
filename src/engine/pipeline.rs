@@ -2,6 +2,7 @@ use crate::model::{Config, Diagnostics, ReadStopReason, ScanOutcome, Status, Tcp
 use crate::probe::{probe_for_target, ProbeRequest};
 use crate::util::now_millis;
 use async_trait::async_trait;
+use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tracing::debug;
@@ -58,6 +59,7 @@ impl TargetProcessor for DefaultProcessor {
                         message: err.to_string(),
                     }),
                     cfg.max_bytes,
+                    cfg.read_timeout,
                 ));
             }
             Err(_) => {
@@ -75,6 +77,7 @@ impl TargetProcessor for DefaultProcessor {
                         message: "connect timeout".into(),
                     }),
                     cfg.max_bytes,
+                    cfg.read_timeout,
                 ));
             }
         };
@@ -86,7 +89,7 @@ impl TargetProcessor for DefaultProcessor {
         };
         let probe = probe_for_target(&probe_req);
 
-        let mut reader = BannerReader::new(cfg.max_bytes);
+        let mut reader = BannerReader::new(cfg.max_bytes, cfg.read_timeout);
         let read_result = if let Some(probe) = probe {
             match timeout(cfg.read_timeout, probe.execute(&mut stream, cfg.as_ref())).await {
                 Ok(Ok(result)) => result,
@@ -102,6 +105,7 @@ impl TargetProcessor for DefaultProcessor {
                             message: err.to_string(),
                         }),
                         cfg.max_bytes,
+                        cfg.read_timeout,
                     ))
                 }
                 Err(_) => {
@@ -116,6 +120,7 @@ impl TargetProcessor for DefaultProcessor {
                             message: "read timeout".into(),
                         }),
                         cfg.max_bytes,
+                        cfg.read_timeout,
                     ))
                 }
             }
@@ -134,6 +139,7 @@ impl TargetProcessor for DefaultProcessor {
                             message: err.to_string(),
                         }),
                         cfg.max_bytes,
+                        cfg.read_timeout,
                     ))
                 }
                 Err(_) => {
@@ -148,6 +154,7 @@ impl TargetProcessor for DefaultProcessor {
                             message: "read timeout".into(),
                         }),
                         cfg.max_bytes,
+                        cfg.read_timeout,
                     ))
                 }
             }
@@ -177,13 +184,14 @@ fn outcome_with_context(
     bytes: Vec<u8>,
     diagnostics: Option<Diagnostics>,
     max_bytes: usize,
+    idle_timeout: Duration,
 ) -> ScanOutcome {
     let read_result = super::reader::ReadResult {
         truncated: matches!(reason, ReadStopReason::SizeLimit) || bytes.len() >= max_bytes,
         bytes,
         reason: reason.clone(),
     };
-    let banner = BannerReader::new(max_bytes).render(read_result.clone());
+    let banner = BannerReader::new(max_bytes, idle_timeout).render(read_result.clone());
     let fingerprint = crate::probe::fingerprint(&read_result);
     ScanOutcome {
         target: target.view(),

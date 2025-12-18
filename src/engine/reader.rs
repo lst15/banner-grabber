@@ -1,13 +1,19 @@
 use crate::model::{Banner, ReadStopReason};
+use std::time::Duration;
 use tokio::io::AsyncReadExt;
+use tokio::time::timeout;
 
 pub struct BannerReader {
     max_bytes: usize,
+    idle_timeout: Duration,
 }
 
 impl BannerReader {
-    pub fn new(max_bytes: usize) -> Self {
-        Self { max_bytes }
+    pub fn new(max_bytes: usize, idle_timeout: Duration) -> Self {
+        Self {
+            max_bytes,
+            idle_timeout,
+        }
     }
 
     pub async fn read<T: AsyncReadExt + Unpin>(
@@ -19,19 +25,25 @@ impl BannerReader {
         let mut total = 0usize;
         let mut reason = ReadStopReason::ConnectionClosed;
         loop {
-            let n = stream.read(&mut buf[total..]).await?;
-            if n == 0 {
-                break;
-            }
-            total += n;
-            if total >= self.max_bytes {
-                reason = ReadStopReason::SizeLimit;
-                break;
-            }
-            if let Some(pos) = find_delimiter(&buf[..total], extra_delimiter) {
-                total = pos;
-                reason = ReadStopReason::Delimiter;
-                break;
+            match timeout(self.idle_timeout, stream.read(&mut buf[total..])).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => {
+                    total += n;
+                    if total >= self.max_bytes {
+                        reason = ReadStopReason::SizeLimit;
+                        break;
+                    }
+                    if let Some(pos) = find_delimiter(&buf[..total], extra_delimiter) {
+                        total = pos;
+                        reason = ReadStopReason::Delimiter;
+                        break;
+                    }
+                }
+                Ok(Err(err)) => return Err(err.into()),
+                Err(_) => {
+                    reason = ReadStopReason::Timeout;
+                    break;
+                }
             }
         }
         buf.truncate(total);
@@ -65,12 +77,6 @@ fn find_delimiter(buf: &[u8], extra: Option<&[u8]>) -> Option<usize> {
     if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
         return Some(pos + 4);
     }
-    if let Some(pos) = buf.windows(2).position(|w| w == b"\r\n") {
-        return Some(pos + 2);
-    }
-    if let Some(pos) = buf.iter().position(|&b| b == b'\n') {
-        return Some(pos + 1);
-    }
     if let Some(delim) = extra {
         if delim.is_empty() {
             return None;
@@ -85,21 +91,31 @@ fn find_delimiter(buf: &[u8], extra: Option<&[u8]>) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn stops_on_delimiter() {
-        let mut reader = BannerReader::new(64);
+        let mut reader = BannerReader::new(64, Duration::from_millis(200));
         let mut data: &[u8] = b"HTTP/1.1 200 OK\r\n\r\nBody";
         let res = reader.read(&mut data, None).await.unwrap();
         assert!(res.bytes.ends_with(b"\r\n\r\n"));
     }
 
     #[tokio::test]
-    async fn stops_on_single_newline() {
-        let mut reader = BannerReader::new(64);
+    async fn consumes_single_line_without_delimiter() {
+        let mut reader = BannerReader::new(64, Duration::from_millis(200));
         let mut data: &[u8] = b"VTUN server ver 3.X 12/31/2013\n...";
         let res = reader.read(&mut data, None).await.unwrap();
-        assert!(res.bytes.ends_with(b"\n"));
-        assert_eq!(res.bytes, b"VTUN server ver 3.X 12/31/2013\n");
+        assert_eq!(res.reason, ReadStopReason::ConnectionClosed);
+        assert_eq!(res.bytes, b"VTUN server ver 3.X 12/31/2013\n...");
+    }
+
+    #[tokio::test]
+    async fn captures_multiline_banner_until_idle() {
+        let mut reader = BannerReader::new(128, Duration::from_millis(50));
+        let mut data: &[u8] = b"220-line1\r\n220-line2\r\n220 final\r\n";
+        let res = reader.read(&mut data, None).await.unwrap();
+        assert_eq!(res.bytes, b"220-line1\r\n220-line2\r\n220 final\r\n");
+        assert_eq!(res.reason, ReadStopReason::ConnectionClosed);
     }
 }

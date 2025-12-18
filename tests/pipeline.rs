@@ -4,7 +4,7 @@ use tokio::net::TcpListener;
 
 #[tokio::test]
 async fn reader_handles_delayed_banner() {
-    let mut reader = BannerReader::new(32);
+    let mut reader = BannerReader::new(32, std::time::Duration::from_millis(200));
     let mut data: &[u8] = b"hello\r\n";
     let banner = reader.read(&mut data, None).await.unwrap();
     assert_eq!(banner.bytes, b"hello\r\n");
