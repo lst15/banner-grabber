@@ -14,6 +14,7 @@ mod smb;
 mod smtp;
 mod ssh;
 mod telnet;
+mod vnc;
 
 pub use registry::{client_for_target, ClientRequest};
 
