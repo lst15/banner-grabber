@@ -94,6 +94,10 @@ impl Cli {
             _ => anyhow::bail!("--host and --port must be used together"),
         };
 
+        let min_overall_timeout_ms =
+            self.connect_timeout_ms.saturating_add(self.read_timeout_ms.saturating_mul(2));
+        let overall_timeout_ms = self.overall_timeout_ms.max(min_overall_timeout_ms);
+
         Ok(crate::model::Config {
             target,
             input: self.input,
@@ -101,7 +105,7 @@ impl Cli {
             rate: self.rate,
             connect_timeout: Duration::from_millis(self.connect_timeout_ms),
             read_timeout: Duration::from_millis(self.read_timeout_ms),
-            overall_timeout: Duration::from_millis(self.overall_timeout_ms),
+            overall_timeout: Duration::from_millis(overall_timeout_ms),
             max_bytes: self.max_bytes.max(1),
             mode: match self.mode {
                 Mode::Passive => crate::model::ScanMode::Passive,
@@ -115,5 +119,31 @@ impl Cli {
                 },
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enforces_minimum_overall_timeout() {
+        let cli = Cli {
+            host: Some("127.0.0.1".into()),
+            port: Some(21),
+            input: None,
+            concurrency: 1,
+            rate: 1,
+            connect_timeout_ms: 1500,
+            read_timeout_ms: 2000,
+            overall_timeout_ms: 3000,
+            max_bytes: 1024,
+            mode: Mode::Active,
+            output: OutputFormat::Jsonl,
+            pretty: false,
+        };
+
+        let cfg = cli.into_config().expect("config should build");
+        assert_eq!(cfg.overall_timeout, Duration::from_millis(5500));
     }
 }
