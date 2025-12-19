@@ -14,6 +14,7 @@ use super::smb::SmbClient;
 use super::smtp::SmtpClient;
 use super::ssh::SshClient;
 use super::telnet::TelnetClient;
+use super::vnc::VncClient;
 use super::Client;
 
 pub struct ClientRequest {
@@ -35,8 +36,9 @@ static SMTP_CLIENT: SmtpClient = SmtpClient;
 static SMB_CLIENT: SmbClient = SmbClient;
 static SSH_CLIENT: SshClient = SshClient;
 static TELNET_CLIENT: TelnetClient = TelnetClient;
+static VNC_CLIENT: VncClient = VncClient;
 
-static CLIENTS: [&dyn Client; 14] = [
+static CLIENTS: [&dyn Client; 15] = [
     &FTP_CLIENT,
     &IMAP_CLIENT,
     &MEMCACHED_CLIENT,
@@ -51,6 +53,7 @@ static CLIENTS: [&dyn Client; 14] = [
     &SMB_CLIENT,
     &SSH_CLIENT,
     &TELNET_CLIENT,
+    &VNC_CLIENT,
 ];
 
 pub fn client_for_target(req: &ClientRequest) -> Option<&'static dyn Client> {
