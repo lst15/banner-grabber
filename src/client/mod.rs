@@ -10,6 +10,7 @@ mod postgres;
 mod redis;
 mod registry;
 mod session;
+mod smb;
 mod smtp;
 mod ssh;
 

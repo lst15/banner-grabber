@@ -10,6 +10,7 @@ use super::mysql::MysqlClient;
 use super::pop3::Pop3Client;
 use super::postgres::PostgresClient;
 use super::redis::RedisClient;
+use super::smb::SmbClient;
 use super::smtp::SmtpClient;
 use super::ssh::SshClient;
 use super::Client;
@@ -30,9 +31,10 @@ static POP3_CLIENT: Pop3Client = Pop3Client;
 static POSTGRES_CLIENT: PostgresClient = PostgresClient;
 static REDIS_CLIENT: RedisClient = RedisClient;
 static SMTP_CLIENT: SmtpClient = SmtpClient;
+static SMB_CLIENT: SmbClient = SmbClient;
 static SSH_CLIENT: SshClient = SshClient;
 
-static CLIENTS: [&dyn Client; 12] = [
+static CLIENTS: [&dyn Client; 13] = [
     &FTP_CLIENT,
     &IMAP_CLIENT,
     &MEMCACHED_CLIENT,
@@ -44,6 +46,7 @@ static CLIENTS: [&dyn Client; 12] = [
     &POSTGRES_CLIENT,
     &REDIS_CLIENT,
     &SMTP_CLIENT,
+    &SMB_CLIENT,
     &SSH_CLIENT,
 ];
 
