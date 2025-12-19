@@ -32,6 +32,17 @@ impl ClientSession {
         Ok(())
     }
 
+    pub(super) async fn read_with_result(
+        &mut self,
+        stream: &mut TcpStream,
+        delimiter: Option<&[u8]>,
+    ) -> anyhow::Result<ReadResult> {
+        let res = self.reader.read(stream, delimiter).await?;
+        self.truncated |= res.truncated;
+        self.parts.push(res.clone());
+        Ok(res)
+    }
+
     pub(super) async fn send(
         &mut self,
         stream: &mut TcpStream,
