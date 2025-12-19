@@ -117,9 +117,7 @@ impl Cli {
             None
         };
 
-        let ftp_connect_multiplier = if matches!(mode, Mode::Active)
-            && matches!(port, Some(21))
-        {
+        let ftp_connect_multiplier = if matches!(mode, Mode::Active) && matches!(port, Some(21)) {
             // Active FTP handshakes can linger in connect; mirror the pipeline's
             // extended connect timeout so the overall timeout leaves room for it.
             4
@@ -127,7 +125,8 @@ impl Cli {
             1
         };
 
-        let effective_connect_timeout_ms = connect_timeout_ms.saturating_mul(ftp_connect_multiplier);
+        let effective_connect_timeout_ms =
+            connect_timeout_ms.saturating_mul(ftp_connect_multiplier);
 
         let min_overall_timeout_ms =
             effective_connect_timeout_ms.saturating_add(read_timeout_ms.saturating_mul(2));
@@ -148,11 +147,7 @@ impl Cli {
                 Mode::Active => crate::model::ScanMode::Active,
             },
             output: crate::model::OutputConfig {
-                format: if pretty {
-                    OutputFormat::Pretty
-                } else {
-                    output
-                },
+                format: if pretty { OutputFormat::Pretty } else { output },
             },
         })
     }

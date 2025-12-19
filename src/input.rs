@@ -187,6 +187,8 @@ mod tests {
         drop(rx);
 
         let err = resolve_and_send(spec, tx).await.unwrap_err();
-        assert!(err.to_string().contains("failed to dispatch resolved target"));
+        assert!(err
+            .to_string()
+            .contains("failed to dispatch resolved target"));
     }
 }
