@@ -23,11 +23,18 @@ impl Client for FtpClient {
         cfg: &Config,
     ) -> anyhow::Result<crate::engine::reader::ReadResult> {
         let mut session = ClientSession::new(cfg);
+        // LOGIN ANÔNIMO
+        session.send(stream, b"USER anonymous\r\n").await?;
         session.read(stream, None).await?;
-        session.send(stream, b"FEAT\r\n").await?;
+
+        session.send(stream, b"PASS anonymous\r\n").await?;
         session.read(stream, None).await?;
-        session.send(stream, b"SYST\r\n").await?;
-        session.read(stream, None).await?;
+
+        // session.read(stream, None).await.expect("ERR");
+        // session.send(stream, b"FEAT\r\n").await.expect("ERR");
+        // session.read(stream, None).await.expect("ERR");
+        // session.send(stream, b"SYST\r\n").await.expect("ERR");;
+        // session.read(stream, None).await.expect("ERR");
         Ok(session.finish())
     }
 }
