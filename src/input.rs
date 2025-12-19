@@ -123,7 +123,10 @@ async fn resolve_and_send(
             original: spec.clone(),
             resolved: addr,
         };
-        tx.send(Ok(target)).await.ok();
+        tx.send(Ok(target))
+            .await
+            .map_err(anyhow::Error::from)
+            .with_context(|| "failed to dispatch resolved target")?;
     }
     Ok(())
 }
@@ -172,5 +175,18 @@ mod tests {
 
         assert!(targets.iter().all(|t| t.original.port == 80));
         assert!(!targets.is_empty());
+    }
+
+    #[tokio::test]
+    async fn bubbling_up_send_failures() {
+        let spec = TargetSpec {
+            host: "127.0.0.1".to_string(),
+            port: 80,
+        };
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+
+        let err = resolve_and_send(spec, tx).await.unwrap_err();
+        assert!(err.to_string().contains("failed to dispatch resolved target"));
     }
 }
