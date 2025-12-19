@@ -3,7 +3,6 @@ use crate::model::{Config, ReadStopReason};
 use anyhow::Context;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-use tokio::time::timeout;
 
 use std::time::{Duration, Instant};
 
@@ -33,7 +32,7 @@ impl ClientSession {
         stream: &mut TcpStream,
         delimiter: Option<&[u8]>,
     ) -> anyhow::Result<bool> {
-        let timeout_dur = match self.remaining_time() {
+        let idle = match self.remaining_time() {
             Some(dur) if dur.is_zero() => {
                 self.push_timeout();
                 return Ok(true);
@@ -45,17 +44,13 @@ impl ClientSession {
             }
         };
 
-        match timeout(timeout_dur, self.reader.read(stream, delimiter)).await {
-            Ok(Ok(res)) => {
+        match self.reader.read_with_timeout(stream, delimiter, idle).await {
+            Ok(res) => {
                 self.truncated |= res.truncated;
                 self.parts.push(res);
-                Ok(false)
-            }
-            Ok(Err(err)) => Err(err.into()),
-            Err(_) => {
-                self.push_timeout();
                 Ok(self.deadline_exhausted())
             }
+            Err(err) => Err(err.into()),
         }
     }
 

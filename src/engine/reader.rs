@@ -21,11 +21,21 @@ impl BannerReader {
         stream: &mut T,
         extra_delimiter: Option<&[u8]>,
     ) -> anyhow::Result<ReadResult> {
+        self.read_with_timeout(stream, extra_delimiter, self.idle_timeout)
+            .await
+    }
+
+    pub async fn read_with_timeout<T: AsyncReadExt + Unpin>(
+        &mut self,
+        stream: &mut T,
+        extra_delimiter: Option<&[u8]>,
+        idle_timeout: Duration,
+    ) -> anyhow::Result<ReadResult> {
         let mut buf = vec![0u8; self.max_bytes];
         let mut total = 0usize;
         let mut reason = ReadStopReason::ConnectionClosed;
         loop {
-            match timeout(self.idle_timeout, stream.read(&mut buf[total..])).await {
+            match timeout(idle_timeout, stream.read(&mut buf[total..])).await {
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => {
                     total += n;
