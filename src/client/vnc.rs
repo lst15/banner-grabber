@@ -30,7 +30,22 @@ impl Client for VncClient {
             session.send(stream, &version_response.bytes).await?;
         }
 
-        let _ = session.read_with_result(stream, None).await?;
+        // read the list of supported security types
+        let security = session.read_with_result(stream, None).await?;
+
+        // If the server returned any security type, pick the first one to keep the
+        // handshake flowing so we can capture the server banner/metadata.
+        if let Some(first_type) = security.bytes.get(1) {
+            session.send(stream, &[*first_type]).await?;
+
+            // read the security result (success or failure)
+            let _ = session.read_with_result(stream, None).await?;
+
+            // request to share the desktop and read the server init data (includes the
+            // server name/banner)
+            session.send(stream, &[1u8]).await?;
+            let _ = session.read_with_result(stream, None).await?;
+        }
 
         Ok(session.finish())
     }
