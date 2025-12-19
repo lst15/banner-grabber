@@ -2,6 +2,8 @@
 
 Async banner grabbing tool using Tokio with configurable timeouts, rate limiting, and pluggable probes.
 
+Active mode now includes lightweight clients for common protocols (FTP, SMTP, SSH, MySQL) that can perform optional handshakes and send simple probes (for example, `FEAT`/`SYST` on FTP or `EHLO` on SMTP) to coax richer banners.
+
 ## Usage
 
 Run with a single host/port:

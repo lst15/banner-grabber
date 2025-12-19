@@ -1,4 +1,5 @@
 mod cli;
+mod client;
 mod engine;
 mod input;
 mod model;
@@ -9,7 +10,7 @@ mod util;
 use clap::Parser;
 use cli::Cli;
 use engine::Engine;
-use output::OutputSink;
+use output::OutputChannel;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -23,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let cfg = cli.into_config()?;
 
-    let sink = OutputSink::new(cfg.output.clone())?;
+    let sink = OutputChannel::new(cfg.output.clone())?;
     let mut engine = Engine::new(cfg, sink)?;
     engine.run().await?;
 
