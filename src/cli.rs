@@ -72,50 +72,74 @@ impl fmt::Display for Mode {
 
 impl Cli {
     pub fn into_config(self) -> anyhow::Result<crate::model::Config> {
-        if self.host.is_none() && self.input.is_none() {
+        let Cli {
+            host,
+            port,
+            input,
+            concurrency,
+            rate,
+            connect_timeout_ms,
+            read_timeout_ms,
+            overall_timeout_ms,
+            max_bytes,
+            mode,
+            output,
+            pretty,
+        } = self;
+
+        if host.is_none() && input.is_none() {
             anyhow::bail!("either --host/--port or --input is required");
         }
 
-        if self.host.is_some() && self.input.is_some() {
+        if host.is_some() && input.is_some() {
             anyhow::bail!("--host/--port and --input are mutually exclusive");
         }
 
-        if self.concurrency == 0 {
+        if concurrency == 0 {
             anyhow::bail!("concurrency must be greater than zero");
         }
 
-        if self.rate == 0 {
+        if rate == 0 {
             anyhow::bail!("rate must be greater than zero");
         }
 
-        let target = match (self.host, self.port) {
-            (Some(h), Some(p)) => Some(crate::model::TargetSpec { host: h, port: p }),
-            (None, None) => None,
-            _ => anyhow::bail!("--host and --port must be used together"),
+        let target = match (host.clone(), port, input.is_some()) {
+            (Some(h), Some(p), _) => Some(crate::model::TargetSpec { host: h, port: p }),
+            (Some(_), None, _) => anyhow::bail!("--host and --port must be used together"),
+            (None, Some(_), false) => anyhow::bail!("--host and --port must be used together"),
+            (None, Some(_), true) => None,
+            (None, None, _) => None,
+        };
+
+        let port_filter = if host.is_none() && input.is_some() {
+            port
+        } else {
+            None
         };
 
         let min_overall_timeout_ms =
-            self.connect_timeout_ms.saturating_add(self.read_timeout_ms.saturating_mul(2));
-        let overall_timeout_ms = self.overall_timeout_ms.max(min_overall_timeout_ms);
+            connect_timeout_ms.saturating_add(read_timeout_ms.saturating_mul(2));
+        let overall_timeout_ms = overall_timeout_ms.max(min_overall_timeout_ms);
 
         Ok(crate::model::Config {
             target,
-            input: self.input,
-            concurrency: self.concurrency,
-            rate: self.rate,
-            connect_timeout: Duration::from_millis(self.connect_timeout_ms),
-            read_timeout: Duration::from_millis(self.read_timeout_ms),
+            input,
+            concurrency,
+            rate,
+            connect_timeout: Duration::from_millis(connect_timeout_ms),
+            read_timeout: Duration::from_millis(read_timeout_ms),
             overall_timeout: Duration::from_millis(overall_timeout_ms),
-            max_bytes: self.max_bytes.max(1),
-            mode: match self.mode {
+            max_bytes: max_bytes.max(1),
+            port_filter,
+            mode: match mode {
                 Mode::Passive => crate::model::ScanMode::Passive,
                 Mode::Active => crate::model::ScanMode::Active,
             },
             output: crate::model::OutputConfig {
-                format: if self.pretty {
+                format: if pretty {
                     OutputFormat::Pretty
                 } else {
-                    self.output
+                    output
                 },
             },
         })
@@ -145,5 +169,27 @@ mod tests {
 
         let cfg = cli.into_config().expect("config should build");
         assert_eq!(cfg.overall_timeout, Duration::from_millis(5500));
+    }
+
+    #[test]
+    fn allows_port_filter_with_input() {
+        let cli = Cli {
+            host: None,
+            port: Some(443),
+            input: Some("targets.txt".into()),
+            concurrency: 4,
+            rate: 10,
+            connect_timeout_ms: 1000,
+            read_timeout_ms: 2000,
+            overall_timeout_ms: 4000,
+            max_bytes: 2048,
+            mode: Mode::Passive,
+            output: OutputFormat::Jsonl,
+            pretty: false,
+        };
+
+        let cfg = cli.into_config().expect("config should build");
+        assert!(cfg.target.is_none());
+        assert_eq!(cfg.port_filter, Some(443));
     }
 }

@@ -21,6 +21,7 @@ pub struct Target {
 pub struct Config {
     pub target: Option<TargetSpec>,
     pub input: Option<String>,
+    pub port_filter: Option<u16>,
     pub concurrency: usize,
     pub rate: u32,
     pub connect_timeout: Duration,

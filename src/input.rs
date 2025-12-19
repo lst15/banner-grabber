@@ -26,9 +26,10 @@ pub fn stream_targets(
 
     if let Some(path) = cfg.input.clone() {
         let tx = tx.clone();
+        let port_filter = cfg.port_filter;
         tokio::spawn(async move {
             let tx_err = tx.clone();
-            if let Err(err) = read_file(path, tx).await {
+            if let Err(err) = read_file(path, port_filter, tx).await {
                 tracing::error!(error = %err, "failed to read input file");
                 let _ = tx_err.send(Err(err)).await;
             }
@@ -39,7 +40,11 @@ pub fn stream_targets(
     Ok(ReceiverStream::new(rx))
 }
 
-async fn read_file(path: String, tx: mpsc::Sender<anyhow::Result<Target>>) -> anyhow::Result<()> {
+async fn read_file(
+    path: String,
+    port_filter: Option<u16>,
+    tx: mpsc::Sender<anyhow::Result<Target>>,
+) -> anyhow::Result<()> {
     let file = tokio::fs::File::open(&path)
         .await
         .with_context(|| format!("cannot open input {}", path))?;
@@ -53,6 +58,11 @@ async fn read_file(path: String, tx: mpsc::Sender<anyhow::Result<Target>>) -> an
             continue;
         }
         if let Some(spec) = parse_target(trimmed) {
+            if let Some(filter_port) = port_filter {
+                if spec.port != filter_port {
+                    continue;
+                }
+            }
             let tx = tx.clone();
             let sem = sem.clone();
             tasks.push(tokio::spawn(async move {
@@ -121,11 +131,46 @@ async fn resolve_and_send(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::NamedTempFile;
+    use tokio_stream::StreamExt;
 
     #[tokio::test]
     async fn parses_lines() {
         let spec = parse_target("[::1]:443").unwrap();
         assert_eq!(spec.port, 443);
         assert_eq!(spec.host, "::1");
+    }
+
+    #[tokio::test]
+    async fn filters_targets_by_port_when_requested() {
+        let mut file = NamedTempFile::new().unwrap();
+        use std::io::Write;
+        writeln!(file, "127.0.0.1:80\n127.0.0.1:81").unwrap();
+
+        let cfg = crate::model::Config {
+            target: None,
+            input: Some(file.path().to_string_lossy().into()),
+            port_filter: Some(80),
+            concurrency: 1,
+            rate: 1,
+            connect_timeout: std::time::Duration::from_millis(100),
+            read_timeout: std::time::Duration::from_millis(100),
+            overall_timeout: std::time::Duration::from_millis(200),
+            max_bytes: 64,
+            mode: crate::model::ScanMode::Passive,
+            output: crate::model::OutputConfig {
+                format: crate::model::OutputFormat::Jsonl,
+            },
+        };
+
+        let mut stream = stream_targets(&cfg).unwrap();
+        let mut targets = Vec::new();
+        while let Some(res) = stream.next().await {
+            let target = res.expect("target resolution should succeed");
+            targets.push(target);
+        }
+
+        assert!(targets.iter().all(|t| t.original.port == 80));
+        assert!(!targets.is_empty());
     }
 }

@@ -79,6 +79,7 @@ mod tests {
         let cfg = Config {
             target: None,
             input: None,
+            port_filter: None,
             concurrency: 1,
             rate: 1,
             connect_timeout: std::time::Duration::from_millis(100),
