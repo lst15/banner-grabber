@@ -1,5 +1,5 @@
 use crate::client::{client_for_target, ClientRequest};
-use crate::model::{Config, Diagnostics, ReadStopReason, ScanOutcome, Status, TcpMeta};
+use crate::model::{Config, Diagnostics, ReadStopReason, ScanMode, ScanOutcome, Status, TcpMeta};
 use crate::probe::{probe_for_target, ProbeRequest};
 use crate::util::now_millis;
 use async_trait::async_trait;
@@ -31,8 +31,8 @@ impl TargetProcessor for DefaultProcessor {
     ) -> anyhow::Result<ScanOutcome> {
         let start = now_millis();
         let tcp_start = now_millis();
-        let connect_result =
-            timeout(cfg.connect_timeout, TcpStream::connect(target.resolved)).await;
+        let connect_timeout = adjusted_connect_timeout(cfg.as_ref(), &target);
+        let connect_result = timeout(connect_timeout, TcpStream::connect(target.resolved)).await;
 
         let (mut stream, tcp_meta) = match connect_result {
             Ok(Ok(stream)) => {
@@ -168,6 +168,71 @@ impl TargetProcessor for DefaultProcessor {
             fingerprint,
             diagnostics: None,
         })
+    }
+}
+
+fn adjusted_connect_timeout(cfg: &Config, target: &crate::model::Target) -> Duration {
+    if matches!(cfg.mode, ScanMode::Active) && target.resolved.port() == 21 {
+        // FTP servers are often slower to finish the TCP handshake due to
+        // connection tracking and banner throttling. Give them extra time so
+        // we don't misclassify healthy endpoints as timeouts in active mode.
+        return cfg.connect_timeout.saturating_mul(2);
+    }
+
+    cfg.connect_timeout
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{OutputConfig, OutputFormat, Target, TargetSpec};
+
+    fn dummy_cfg(mode: ScanMode, connect_timeout: Duration) -> Config {
+        Config {
+            target: None,
+            input: None,
+            port_filter: None,
+            concurrency: 1,
+            rate: 1,
+            connect_timeout,
+            read_timeout: Duration::from_secs(1),
+            overall_timeout: Duration::from_secs(5),
+            max_bytes: 64,
+            mode,
+            output: OutputConfig {
+                format: OutputFormat::Jsonl,
+            },
+        }
+    }
+
+    fn ftp_target() -> Target {
+        Target {
+            original: TargetSpec {
+                host: "example.com".into(),
+                port: 21,
+            },
+            resolved: "198.51.100.10:21".parse().unwrap(),
+        }
+    }
+
+    #[test]
+    fn extends_timeout_for_active_ftp() {
+        let cfg = dummy_cfg(ScanMode::Active, Duration::from_secs(1));
+        let timeout = adjusted_connect_timeout(&cfg, &ftp_target());
+        assert_eq!(timeout, Duration::from_secs(2));
+    }
+
+    #[test]
+    fn leaves_timeout_unchanged_for_other_modes_and_ports() {
+        let cfg = dummy_cfg(ScanMode::Passive, Duration::from_secs(1));
+        let timeout = adjusted_connect_timeout(&cfg, &ftp_target());
+        assert_eq!(timeout, Duration::from_secs(1));
+
+        let mut active_non_ftp = ftp_target();
+        active_non_ftp.resolved.set_port(22);
+        let cfg_active = dummy_cfg(ScanMode::Active, Duration::from_secs(1));
+        let timeout_active = adjusted_connect_timeout(&cfg_active, &active_non_ftp);
+        assert_eq!(timeout_active, Duration::from_secs(1));
     }
 }
 
