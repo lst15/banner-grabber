@@ -33,11 +33,17 @@ impl ClientSession {
         stream: &mut TcpStream,
         delimiter: Option<&[u8]>,
     ) -> anyhow::Result<bool> {
-        let timeout_dur = self.remaining_time().unwrap_or(self.idle_timeout);
-        if timeout_dur.is_zero() {
-            self.push_timeout();
-            return Ok(true);
-        }
+        let timeout_dur = match self.remaining_time() {
+            Some(dur) if dur.is_zero() => {
+                self.push_timeout();
+                return Ok(true);
+            }
+            Some(dur) => dur,
+            None => {
+                self.push_timeout();
+                return Ok(true);
+            }
+        };
 
         match timeout(timeout_dur, self.reader.read(stream, delimiter)).await {
             Ok(Ok(res)) => {
@@ -48,7 +54,7 @@ impl ClientSession {
             Ok(Err(err)) => Err(err.into()),
             Err(_) => {
                 self.push_timeout();
-                Ok(true)
+                Ok(self.deadline_exhausted())
             }
         }
     }
@@ -94,6 +100,10 @@ impl ClientSession {
         self.deadline
             .checked_duration_since(Instant::now())
             .map(|remaining| remaining.min(self.idle_timeout))
+    }
+
+    fn deadline_exhausted(&self) -> bool {
+        Instant::now() >= self.deadline
     }
 
     fn push_timeout(&mut self) {
