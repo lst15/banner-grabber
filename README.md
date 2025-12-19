@@ -18,6 +18,9 @@ Run against a list from a file (one target per line):
 cargo run -- --input targets.txt
 ```
 
+You can also provide `--port` alongside `--input` to filter the list, keeping only targets
+whose port matches the value you supplied.
+
 Optional flags you may want to tweak:
 
 - `--concurrency <N>`: concurrent connections limit (default 64)
