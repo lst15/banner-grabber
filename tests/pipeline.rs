@@ -41,7 +41,7 @@ async fn simulated_service_requires_probe() {
         },
     };
 
-    let sink = banner_grabber::output::OutputSink::new(cfg.output.clone()).unwrap();
+    let sink = banner_grabber::output::OutputChannel::new(cfg.output.clone()).unwrap();
     let mut engine = banner_grabber::engine::Engine::new(cfg, sink).unwrap();
     engine.run().await.unwrap();
 }
@@ -82,7 +82,7 @@ async fn http_probe_runs_on_nonstandard_ports() {
         },
     };
 
-    let sink = banner_grabber::output::OutputSink::new(cfg.output.clone()).unwrap();
+    let sink = banner_grabber::output::OutputChannel::new(cfg.output.clone()).unwrap();
     let mut engine = banner_grabber::engine::Engine::new(cfg, sink).unwrap();
     engine.run().await.unwrap();
 }
@@ -124,7 +124,7 @@ async fn passive_mode_does_not_send_active_probe_on_timeout() {
         },
     };
 
-    let sink = banner_grabber::output::OutputSink::new(cfg.output.clone()).unwrap();
+    let sink = banner_grabber::output::OutputChannel::new(cfg.output.clone()).unwrap();
     let mut engine = banner_grabber::engine::Engine::new(cfg, sink).unwrap();
     engine.run().await.unwrap();
 }

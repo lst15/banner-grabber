@@ -1,3 +1,4 @@
+use crate::client::{client_for_target, ClientRequest};
 use crate::model::{Config, Diagnostics, ReadStopReason, ScanOutcome, Status, TcpMeta};
 use crate::probe::{probe_for_target, ProbeRequest};
 use crate::util::now_millis;
@@ -83,6 +84,11 @@ impl TargetProcessor for DefaultProcessor {
         };
         let status = Status::Open;
 
+        let client_req = ClientRequest {
+            target: target.clone(),
+            mode: cfg.mode,
+        };
+        let client = client_for_target(&client_req);
         let probe_req = ProbeRequest {
             target: target.clone(),
             mode: cfg.mode,
@@ -90,7 +96,26 @@ impl TargetProcessor for DefaultProcessor {
         let probe = probe_for_target(&probe_req);
 
         let mut reader = BannerReader::new(cfg.max_bytes, cfg.read_timeout);
-        let read_result = if let Some(probe) = probe {
+        let read_result = if let Some(client) = client {
+            match client.execute(&mut stream, cfg.as_ref()).await {
+                Ok(result) => result,
+                Err(err) => {
+                    return Ok(outcome_with_context(
+                        target,
+                        Status::Error,
+                        tcp_meta,
+                        ReadStopReason::NotStarted,
+                        Vec::new(),
+                        Some(Diagnostics {
+                            stage: format!("client:{}", client.name()),
+                            message: err.to_string(),
+                        }),
+                        cfg.max_bytes,
+                        cfg.read_timeout,
+                    ))
+                }
+            }
+        } else if let Some(probe) = probe {
             match probe.execute(&mut stream, cfg.as_ref()).await {
                 Ok(result) => result,
                 Err(err) => {

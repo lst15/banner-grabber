@@ -1,80 +1,6 @@
-use crate::engine::reader::{BannerReader, ReadResult};
-use crate::model::Config;
-use crate::model::{Fingerprint, ScanMode, Target};
-use anyhow::Context;
-use async_trait::async_trait;
+use crate::engine::reader::ReadResult;
+use crate::model::Fingerprint;
 use std::collections::BTreeMap;
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
-
-#[async_trait]
-pub trait Prober: Send + Sync {
-    fn name(&self) -> &'static str;
-    fn probe_bytes(&self) -> &'static [u8];
-    fn expected_delimiter(&self) -> Option<&'static [u8]> {
-        None
-    }
-
-    fn matches(&self, target: &Target) -> bool;
-
-    #[allow(dead_code)]
-    fn fingerprint(&self, _banner: &ReadResult) -> Fingerprint {
-        Fingerprint {
-            protocol: None,
-            score: 0.0,
-            fields: Default::default(),
-        }
-    }
-
-    async fn execute(&self, stream: &mut TcpStream, cfg: &Config) -> anyhow::Result<ReadResult> {
-        if !self.probe_bytes().is_empty() {
-            stream
-                .write_all(self.probe_bytes())
-                .await
-                .with_context(|| format!("failed to write probe {}", self.name()))?;
-        }
-
-        let mut reader = BannerReader::new(cfg.max_bytes, cfg.read_timeout);
-        reader.read(stream, self.expected_delimiter()).await
-    }
-}
-
-pub struct ProbeRequest {
-    pub target: Target,
-    pub mode: ScanMode,
-}
-
-static HTTP_PROBE: HttpProbe = HttpProbe;
-static REDIS_PROBE: RedisProbe = RedisProbe;
-static TLS_PROBE: TlsProbe = TlsProbe;
-static PROBES: [&dyn Prober; 3] = [&REDIS_PROBE, &TLS_PROBE, &HTTP_PROBE];
-
-pub fn probe_for_target(req: &ProbeRequest) -> Option<&'static dyn Prober> {
-    if matches!(req.mode, ScanMode::Passive) {
-        return None;
-    }
-
-    // Always reuse the same probe instances to avoid allocations on hot paths.
-    if let Some(probe) = PROBES
-        .iter()
-        .copied()
-        .find(|probe| probe.matches(&req.target))
-    {
-        return Some(probe);
-    }
-
-    // Fall back to a generic HTTP probe in active mode to coax banners from
-    // services running on non-standard ports that are unlikely to speak TLS.
-    matches!(req.mode, ScanMode::Active)
-        .then(|| {
-            if is_probably_tls_port(req.target.resolved.port()) {
-                None
-            } else {
-                Some(&HTTP_PROBE as &'static dyn Prober)
-            }
-        })
-        .flatten()
-}
 
 pub fn fingerprint(read: &ReadResult) -> Fingerprint {
     let banner = &read.bytes;
@@ -163,59 +89,6 @@ pub fn fingerprint(read: &ReadResult) -> Fingerprint {
     }
 }
 
-struct HttpProbe;
-struct RedisProbe;
-struct TlsProbe;
-
-impl Prober for HttpProbe {
-    fn name(&self) -> &'static str {
-        "http"
-    }
-
-    fn probe_bytes(&self) -> &'static [u8] {
-        b"GET / HTTP/1.0\r\nHost: example\r\n\r\n"
-    }
-
-    fn matches(&self, target: &Target) -> bool {
-        matches!(target.resolved.port(), 80 | 443 | 8000 | 8080 | 8443)
-    }
-}
-
-impl Prober for RedisProbe {
-    fn name(&self) -> &'static str {
-        "redis"
-    }
-
-    fn probe_bytes(&self) -> &'static [u8] {
-        b"PING\r\n"
-    }
-
-    fn matches(&self, target: &Target) -> bool {
-        target.resolved.port() == 6379
-    }
-}
-
-impl Prober for TlsProbe {
-    fn name(&self) -> &'static str {
-        "tls"
-    }
-
-    fn probe_bytes(&self) -> &'static [u8] {
-        // Minimal TLS ClientHello that negotiates modern cipher suites without
-        // allocating on the hot path.
-        const CLIENT_HELLO: &[u8] = b"\x16\x03\x01\x00\x31\x01\x00\x00\x2d\x03\x03\x5a\x5a\x5a\x5a\x5a\x5a\x5a\x5a\x5a\x5a\x5a\x5a\x5a\x5a\x5a\x5a\x5a\x5a\x5a\x5a\x00\x00\x02\x13\x01\x00\x00\x05\x00\xff\x01\x00\x01\x00";
-        CLIENT_HELLO
-    }
-
-    fn matches(&self, target: &Target) -> bool {
-        is_probably_tls_port(target.resolved.port())
-    }
-}
-
-fn is_probably_tls_port(port: u16) -> bool {
-    matches!(port, 443 | 8443 | 9443 | 10443)
-}
-
 fn tls_version(banner: &[u8]) -> Option<String> {
     if !is_tls_handshake(banner) {
         return None;
@@ -288,12 +161,13 @@ fn extract_error_line(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::ReadStopReason;
 
     #[test]
     fn fingerprints_tls() {
         let banner = ReadResult {
             bytes: vec![0x16, 0x03, 0x04, 0x00, 0x20],
-            reason: crate::model::ReadStopReason::Delimiter,
+            reason: ReadStopReason::Delimiter,
             truncated: false,
         };
         let fp = fingerprint(&banner);
@@ -308,7 +182,7 @@ mod tests {
     fn fingerprints_tls_without_known_version() {
         let banner = ReadResult {
             bytes: vec![0x16, 0x03, 0x05, 0x00, 0x20],
-            reason: crate::model::ReadStopReason::Delimiter,
+            reason: ReadStopReason::Delimiter,
             truncated: false,
         };
         let fp = fingerprint(&banner);
@@ -320,13 +194,13 @@ mod tests {
     fn fingerprints_smtp_and_ftp() {
         let smtp_fp = fingerprint(&ReadResult {
             bytes: b"220 mail.example.com ESMTP ready\r\n".to_vec(),
-            reason: crate::model::ReadStopReason::ConnectionClosed,
+            reason: ReadStopReason::ConnectionClosed,
             truncated: false,
         });
         assert_eq!(smtp_fp.protocol.as_deref(), Some("smtp"));
         let ftp_fp = fingerprint(&ReadResult {
             bytes: b"220 FTP server ready\r\n".to_vec(),
-            reason: crate::model::ReadStopReason::ConnectionClosed,
+            reason: ReadStopReason::ConnectionClosed,
             truncated: false,
         });
         assert_eq!(ftp_fp.protocol.as_deref(), Some("ftp"));
@@ -338,7 +212,7 @@ mod tests {
         banner.extend_from_slice(b"8.0.36\0");
         let fp = fingerprint(&ReadResult {
             bytes: banner.clone(),
-            reason: crate::model::ReadStopReason::ConnectionClosed,
+            reason: ReadStopReason::ConnectionClosed,
             truncated: false,
         });
         assert_eq!(fp.protocol.as_deref(), Some("mysql"));
@@ -354,7 +228,7 @@ mod tests {
     fn fingerprints_ssh_with_details() {
         let fp = fingerprint(&ReadResult {
             bytes: b"SSH-2.0-OpenSSH_9.3\r\n".to_vec(),
-            reason: crate::model::ReadStopReason::ConnectionClosed,
+            reason: ReadStopReason::ConnectionClosed,
             truncated: false,
         });
         assert_eq!(fp.protocol.as_deref(), Some("ssh"));
@@ -372,7 +246,7 @@ mod tests {
     fn fingerprints_error_banners() {
         let banner = ReadResult {
             bytes: b"500 internal server error\r\n".to_vec(),
-            reason: crate::model::ReadStopReason::Delimiter,
+            reason: ReadStopReason::Delimiter,
             truncated: false,
         };
         let fp = fingerprint(&banner);

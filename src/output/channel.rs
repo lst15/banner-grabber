@@ -1,11 +1,10 @@
-use crate::model::{
-    Banner, Fingerprint, OutputConfig, OutputFormat, ScanOutcome, Status, Target, TcpMeta,
-};
-use std::io::{BufWriter, Write};
+use crate::model::{Diagnostics, Fingerprint, OutputConfig, ScanOutcome, Status, Target, TcpMeta};
 use tokio::sync::mpsc;
 
+use super::sink::OutputSink;
+
 #[derive(Clone)]
-pub struct OutputSink {
+pub struct OutputChannel {
     inner: std::sync::Arc<OutputInner>,
 }
 
@@ -18,11 +17,20 @@ enum OutputCommand {
     Emit(ScanOutcome),
 }
 
-impl OutputSink {
+impl OutputChannel {
     pub fn new(cfg: OutputConfig) -> anyhow::Result<Self> {
-        let (tx, rx) = mpsc::channel(1024);
-
-        let handle = tokio::task::spawn_blocking(move || run_writer(cfg, rx));
+        let (tx, mut rx) = mpsc::channel(1024);
+        let handle = tokio::task::spawn_blocking(move || {
+            let mut sink = OutputSink::new(cfg);
+            while let Some(cmd) = rx.blocking_recv() {
+                if let Err(err) = match cmd {
+                    OutputCommand::Emit(outcome) => sink.write_outcome(outcome),
+                } {
+                    eprintln!("failed to write scan outcome: {err}");
+                }
+            }
+            sink.flush();
+        });
 
         Ok(Self {
             inner: std::sync::Arc::new(OutputInner {
@@ -53,13 +61,13 @@ impl OutputSink {
                 connect_ms: None,
                 error: Some(error.clone()),
             },
-            banner: Banner::default(),
+            banner: Default::default(),
             fingerprint: Fingerprint {
                 protocol: None,
                 score: 0.0,
                 fields: Default::default(),
             },
-            diagnostics: Some(crate::model::Diagnostics {
+            diagnostics: Some(Diagnostics {
                 stage: "pipeline".into(),
                 message: error,
             }),
@@ -77,57 +85,5 @@ impl OutputSink {
         }
 
         Ok(())
-    }
-}
-
-fn run_writer(cfg: OutputConfig, mut rx: mpsc::Receiver<OutputCommand>) {
-    let stdout = std::io::stdout();
-    let mut writer = BufWriter::new(stdout);
-
-    while let Some(cmd) = rx.blocking_recv() {
-        if let Err(err) = match cmd {
-            OutputCommand::Emit(outcome) => write_outcome(&cfg, &mut writer, outcome),
-        } {
-            eprintln!("failed to write scan outcome: {err}");
-        }
-    }
-
-    let _ = writer.flush();
-}
-
-fn write_outcome(
-    cfg: &OutputConfig,
-    writer: &mut BufWriter<std::io::Stdout>,
-    outcome: ScanOutcome,
-) -> anyhow::Result<()> {
-    match cfg.format {
-        OutputFormat::Jsonl => {
-            let line = serde_json::to_string(&outcome)?;
-            writeln!(writer, "{line}")?;
-        }
-        OutputFormat::Pretty => {
-            writeln!(
-                writer,
-                "{} {} -> {}",
-                outcome.target.host,
-                outcome.target.port,
-                outcome.status_text()
-            )?;
-            writeln!(writer, "  banner: {}", outcome.banner.printable)?;
-            if let Some(diag) = &outcome.diagnostics {
-                writeln!(writer, "  diagnostics: [{}] {}", diag.stage, diag.message)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-impl ScanOutcome {
-    fn status_text(&self) -> &'static str {
-        match self.status {
-            Status::Open => "open",
-            Status::Timeout => "timeout",
-            Status::Error => "error",
-        }
     }
 }

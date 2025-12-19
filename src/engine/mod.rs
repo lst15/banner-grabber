@@ -3,7 +3,7 @@ pub mod rate;
 pub mod reader;
 
 use crate::model::Config;
-use crate::output::OutputSink;
+use crate::output::OutputChannel;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use pipeline::{DefaultProcessor, TargetProcessor};
@@ -14,20 +14,20 @@ use tracing::instrument;
 
 pub struct Engine {
     cfg: std::sync::Arc<Config>,
-    sink: OutputSink,
+    sink: OutputChannel,
     limiter: RateLimiter,
     sem: std::sync::Arc<Semaphore>,
     processor: std::sync::Arc<dyn TargetProcessor>,
 }
 
 impl Engine {
-    pub fn new(cfg: Config, sink: OutputSink) -> anyhow::Result<Self> {
+    pub fn new(cfg: Config, sink: OutputChannel) -> anyhow::Result<Self> {
         Self::with_processor(cfg, sink, std::sync::Arc::new(DefaultProcessor))
     }
 
     pub fn with_processor(
         cfg: Config,
-        sink: OutputSink,
+        sink: OutputChannel,
         processor: std::sync::Arc<dyn TargetProcessor>,
     ) -> anyhow::Result<Self> {
         let cfg = std::sync::Arc::new(cfg);
