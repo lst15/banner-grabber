@@ -54,6 +54,15 @@ impl ClientSession {
             .with_context(|| "failed to write client command")
     }
 
+    pub(super) fn append_metadata(&mut self, bytes: impl Into<Vec<u8>>) {
+        let bytes = bytes.into();
+        self.parts.push(ReadResult {
+            bytes,
+            reason: ReadStopReason::NotStarted,
+            truncated: false,
+        });
+    }
+
     pub(super) fn finish(mut self) -> ReadResult {
         let mut merged = Vec::new();
         let mut reason = ReadStopReason::NotStarted;
