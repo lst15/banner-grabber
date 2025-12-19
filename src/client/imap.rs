@@ -1,0 +1,31 @@
+use crate::model::{Config, Target};
+use async_trait::async_trait;
+use tokio::net::TcpStream;
+
+use super::session::ClientSession;
+use super::Client;
+
+pub(super) struct ImapClient;
+
+#[async_trait]
+impl Client for ImapClient {
+    fn name(&self) -> &'static str {
+        "imap"
+    }
+
+    fn matches(&self, target: &Target) -> bool {
+        target.resolved.port() == 143
+    }
+
+    async fn execute(
+        &self,
+        stream: &mut TcpStream,
+        cfg: &Config,
+    ) -> anyhow::Result<crate::engine::reader::ReadResult> {
+        let mut session = ClientSession::new(cfg);
+        session.read(stream, Some(b"\n")).await?;
+        session.send(stream, b"a001 CAPABILITY\r\n").await?;
+        session.read(stream, None).await?;
+        Ok(session.finish())
+    }
+}

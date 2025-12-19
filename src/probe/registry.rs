@@ -7,9 +7,9 @@ use tokio::net::TcpStream;
 
 use super::fingerprint;
 use super::http::HttpProbe;
+use super::is_probably_tls_port;
 use super::redis::RedisProbe;
 use super::tls::TlsProbe;
-use super::is_probably_tls_port;
 
 #[async_trait]
 pub trait Prober: Send + Sync {
