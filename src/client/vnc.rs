@@ -98,6 +98,11 @@ impl Client for VncClient {
 
                     let mut header = [0u8; 24];
                     read_exact_timeout(stream, &mut header, cfg.read_timeout).await?;
+
+                    let width = u16::from_be_bytes(header[0..2].try_into().unwrap());
+                    let height = u16::from_be_bytes(header[2..4].try_into().unwrap());
+                    metadata.push_str(&format!("Geometry: {width}x{height}\n"));
+
                     let name_len = u32::from_be_bytes(header[20..24].try_into().unwrap()) as usize;
                     if name_len > 0 {
                         let mut name_bytes = vec![0u8; name_len];
@@ -221,6 +226,7 @@ mod tests {
         assert!(printable.contains("Protocol Version: RFB 003.008"));
         assert!(printable.contains("Security Types:"));
         assert!(printable.contains("1: None"));
+        assert!(printable.contains("Geometry: 800x600"));
         assert!(printable.contains("Server Name: Test Server"));
     }
 }
