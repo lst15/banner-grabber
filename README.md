@@ -4,23 +4,6 @@ Async banner grabbing tool using Tokio with configurable timeouts, rate limiting
 
 Active mode now includes lightweight clients for common protocols (FTP, SMTP, SSH, MySQL) that can perform optional handshakes and send simple probes (for example, `FEAT`/`SYST` on FTP or `EHLO` on SMTP) to coax richer banners.
 
-## Active clients disponíveis
-
-Implementações atuais de active client que realizam handshakes e probes leves para extrair metadados:
-
-- FTP: banner + `FEAT` e `SYST`.
-- SMTP: banner + `EHLO`.
-- SSH: banner + identificação opcional.
-- MySQL: handshake inicial do servidor.
-- IMAP: banner + `CAPABILITY`.
-- POP3: banner + `CAPA`.
-- PostgreSQL: pacote de startup para provocar `AuthenticationRequest`.
-- MSSQL (TDS): handshake `PRELOGIN` expondo versão e opções.
-- MongoDB: comando `isMaster` em `admin.$cmd`.
-- Redis: `PING` seguido de `INFO`.
-- Memcached: `version` seguido de `stats`.
-- MQTT: `CONNECT` com sessão limpa e `clientId` vazio.
-
 ## Usage
 
 Run with a single host/port:

@@ -10,8 +10,10 @@ mod postgres;
 mod redis;
 mod registry;
 mod session;
+mod smb;
 mod smtp;
 mod ssh;
+mod telnet;
 
 pub use registry::{client_for_target, ClientRequest};
 
