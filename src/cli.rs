@@ -117,8 +117,20 @@ impl Cli {
             None
         };
 
+        let ftp_connect_multiplier = if matches!(mode, Mode::Active)
+            && matches!(port, Some(21))
+        {
+            // Active FTP handshakes can linger in connect; mirror the pipeline's
+            // extended connect timeout so the overall timeout leaves room for it.
+            4
+        } else {
+            1
+        };
+
+        let effective_connect_timeout_ms = connect_timeout_ms.saturating_mul(ftp_connect_multiplier);
+
         let min_overall_timeout_ms =
-            connect_timeout_ms.saturating_add(read_timeout_ms.saturating_mul(2));
+            effective_connect_timeout_ms.saturating_add(read_timeout_ms.saturating_mul(2));
         let overall_timeout_ms = overall_timeout_ms.max(min_overall_timeout_ms);
 
         Ok(crate::model::Config {
@@ -168,7 +180,7 @@ mod tests {
         };
 
         let cfg = cli.into_config().expect("config should build");
-        assert_eq!(cfg.overall_timeout, Duration::from_millis(5500));
+        assert_eq!(cfg.overall_timeout, Duration::from_millis(10000));
     }
 
     #[test]

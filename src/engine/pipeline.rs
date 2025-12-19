@@ -176,7 +176,7 @@ fn adjusted_connect_timeout(cfg: &Config, target: &crate::model::Target) -> Dura
         // FTP servers are often slower to finish the TCP handshake due to
         // connection tracking and banner throttling. Give them extra time so
         // we don't misclassify healthy endpoints as timeouts in active mode.
-        return cfg.connect_timeout.saturating_mul(2);
+        return cfg.connect_timeout.saturating_mul(4);
     }
 
     cfg.connect_timeout
@@ -219,7 +219,7 @@ mod tests {
     fn extends_timeout_for_active_ftp() {
         let cfg = dummy_cfg(ScanMode::Active, Duration::from_secs(1));
         let timeout = adjusted_connect_timeout(&cfg, &ftp_target());
-        assert_eq!(timeout, Duration::from_secs(2));
+        assert_eq!(timeout, Duration::from_secs(4));
     }
 
     #[test]
