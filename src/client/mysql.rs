@@ -23,7 +23,7 @@ impl Client for MysqlClient {
         cfg: &Config,
     ) -> anyhow::Result<crate::engine::reader::ReadResult> {
         let mut session = ClientSession::new(cfg);
-        session.read(stream, None).await?;
+        let _ = session.read(stream, None).await?;
         Ok(session.finish())
     }
 }

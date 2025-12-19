@@ -3,12 +3,17 @@ use crate::model::{Config, ReadStopReason};
 use anyhow::Context;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
+use tokio::time::timeout;
+
+use std::time::{Duration, Instant};
 
 pub(super) struct ClientSession {
     reader: BannerReader,
     parts: Vec<ReadResult>,
     max_bytes: usize,
     truncated: bool,
+    deadline: Instant,
+    idle_timeout: Duration,
 }
 
 impl ClientSession {
@@ -18,6 +23,8 @@ impl ClientSession {
             parts: Vec::new(),
             max_bytes: cfg.max_bytes,
             truncated: false,
+            deadline: Instant::now() + cfg.overall_timeout,
+            idle_timeout: cfg.read_timeout,
         }
     }
 
@@ -25,11 +32,25 @@ impl ClientSession {
         &mut self,
         stream: &mut TcpStream,
         delimiter: Option<&[u8]>,
-    ) -> anyhow::Result<()> {
-        let res = self.reader.read(stream, delimiter).await?;
-        self.truncated |= res.truncated;
-        self.parts.push(res);
-        Ok(())
+    ) -> anyhow::Result<bool> {
+        let timeout_dur = self.remaining_time().unwrap_or(self.idle_timeout);
+        if timeout_dur.is_zero() {
+            self.push_timeout();
+            return Ok(true);
+        }
+
+        match timeout(timeout_dur, self.reader.read(stream, delimiter)).await {
+            Ok(Ok(res)) => {
+                self.truncated |= res.truncated;
+                self.parts.push(res);
+                Ok(false)
+            }
+            Ok(Err(err)) => Err(err.into()),
+            Err(_) => {
+                self.push_timeout();
+                Ok(true)
+            }
+        }
     }
 
     pub(super) async fn send(
@@ -67,6 +88,20 @@ impl ClientSession {
             reason,
             truncated: self.truncated || final_len >= self.max_bytes,
         }
+    }
+
+    fn remaining_time(&self) -> Option<Duration> {
+        self.deadline
+            .checked_duration_since(Instant::now())
+            .map(|remaining| remaining.min(self.idle_timeout))
+    }
+
+    fn push_timeout(&mut self) {
+        self.parts.push(ReadResult {
+            bytes: Vec::new(),
+            reason: ReadStopReason::Timeout,
+            truncated: false,
+        });
     }
 }
 

@@ -23,10 +23,12 @@ impl Client for SshClient {
         cfg: &Config,
     ) -> anyhow::Result<crate::engine::reader::ReadResult> {
         let mut session = ClientSession::new(cfg);
-        session.read(stream, Some(b"\n")).await?;
+        if session.read(stream, Some(b"\n")).await? {
+            return Ok(session.finish());
+        }
         // Sending our identification string is optional; ignore errors if the server closes early.
         let _ = session.send(stream, b"SSH-2.0-banner-grabber\r\n").await;
-        let _ = session.read(stream, None).await;
+        let _ = session.read(stream, None).await?;
         Ok(session.finish())
     }
 }

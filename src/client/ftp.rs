@@ -23,11 +23,15 @@ impl Client for FtpClient {
         cfg: &Config,
     ) -> anyhow::Result<crate::engine::reader::ReadResult> {
         let mut session = ClientSession::new(cfg);
-        session.read(stream, None).await?;
+        if session.read(stream, None).await? {
+            return Ok(session.finish());
+        }
         session.send(stream, b"FEAT\r\n").await?;
-        session.read(stream, None).await?;
+        if session.read(stream, None).await? {
+            return Ok(session.finish());
+        }
         session.send(stream, b"SYST\r\n").await?;
-        session.read(stream, None).await?;
+        let _ = session.read(stream, None).await?;
         Ok(session.finish())
     }
 }

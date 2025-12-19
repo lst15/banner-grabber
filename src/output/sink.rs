@@ -30,7 +30,11 @@ impl OutputSink {
                 )?;
                 writeln!(self.writer, "  banner: {}", outcome.banner.printable)?;
                 if let Some(diag) = &outcome.diagnostics {
-                    writeln!(self.writer, "  diagnostics: [{}] {}", diag.stage, diag.message)?;
+                    writeln!(
+                        self.writer,
+                        "  diagnostics: [{}] {}",
+                        diag.stage, diag.message
+                    )?;
                 }
             }
         }
