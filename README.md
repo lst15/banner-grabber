@@ -20,6 +20,7 @@ Implementações atuais de active client que realizam handshakes e probes leves 
 - Redis: `PING` seguido de `INFO`.
 - Memcached: `version` seguido de `stats`.
 - MQTT: `CONNECT` com sessão limpa e `clientId` vazio.
+- Telnet: banner inicial com negociação de opções para elicitar prompts.
 
 ## Usage
 
