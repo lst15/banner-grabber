@@ -8,7 +8,7 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tracing::debug;
 
-use super::reader::BannerReader;
+use super::reader::{BannerReader, ReadResult};
 
 #[async_trait]
 pub trait TargetProcessor: Send + Sync {
@@ -31,9 +31,30 @@ impl TargetProcessor for DefaultProcessor {
     ) -> anyhow::Result<ScanOutcome> {
         let deadline = Instant::now() + cfg.overall_timeout;
         let start = now_millis();
+
         let tcp_start = now_millis();
-        let connect_result =
-            timeout(cfg.connect_timeout, TcpStream::connect(target.resolved)).await;
+        let connect_deadline = match remaining_time(deadline, cfg.connect_timeout) {
+            Some(deadline) => deadline,
+            None => {
+                return Ok(outcome_with_context(
+                    target,
+                    Status::Timeout,
+                    TcpMeta {
+                        connect_ms: None,
+                        error: Some("connect timeout".into()),
+                    },
+                    ReadStopReason::Timeout,
+                    Vec::new(),
+                    Some(Diagnostics {
+                        stage: "connect".into(),
+                        message: "connect timeout".into(),
+                    }),
+                    cfg.max_bytes,
+                    cfg.read_timeout,
+                ))
+            }
+        };
+        let connect_result = timeout(connect_deadline, TcpStream::connect(target.resolved)).await;
 
         let (mut stream, tcp_meta) = match connect_result {
             Ok(Ok(stream)) => {
@@ -98,61 +119,89 @@ impl TargetProcessor for DefaultProcessor {
 
         let mut reader = BannerReader::new(cfg.max_bytes, cfg.read_timeout);
         let read_result = if let Some(client) = client {
-            match client.execute(&mut stream, cfg.as_ref(), deadline).await {
-                Ok(result) => result,
-                Err(err) => {
-                    return Ok(outcome_with_context(
-                        target,
-                        Status::Error,
-                        tcp_meta,
-                        ReadStopReason::NotStarted,
-                        Vec::new(),
-                        Some(Diagnostics {
-                            stage: format!("client:{}", client.name()),
-                            message: err.to_string(),
-                        }),
-                        cfg.max_bytes,
-                        cfg.read_timeout,
-                    ))
+            if deadline_exhausted(deadline) {
+                ReadResult {
+                    bytes: Vec::new(),
+                    reason: ReadStopReason::Timeout,
+                    truncated: false,
+                }
+            } else {
+                match client.execute(&mut stream, cfg.as_ref(), deadline).await {
+                    Ok(result) => result,
+                    Err(err) => {
+                        return Ok(outcome_with_context(
+                            target,
+                            Status::Error,
+                            tcp_meta,
+                            ReadStopReason::NotStarted,
+                            Vec::new(),
+                            Some(Diagnostics {
+                                stage: format!("client:{}", client.name()),
+                                message: err.to_string(),
+                            }),
+                            cfg.max_bytes,
+                            cfg.read_timeout,
+                        ))
+                    }
                 }
             }
         } else if let Some(probe) = probe {
-            match probe.execute(&mut stream, cfg.as_ref()).await {
-                Ok(result) => result,
-                Err(err) => {
-                    return Ok(outcome_with_context(
-                        target,
-                        Status::Error,
-                        tcp_meta,
-                        ReadStopReason::NotStarted,
-                        Vec::new(),
-                        Some(Diagnostics {
-                            stage: "probe".into(),
-                            message: err.to_string(),
-                        }),
-                        cfg.max_bytes,
-                        cfg.read_timeout,
-                    ))
+            if deadline_exhausted(deadline) {
+                ReadResult {
+                    bytes: Vec::new(),
+                    reason: ReadStopReason::Timeout,
+                    truncated: false,
+                }
+            } else {
+                match probe.execute(&mut stream, cfg.as_ref()).await {
+                    Ok(result) => result,
+                    Err(err) => {
+                        return Ok(outcome_with_context(
+                            target,
+                            Status::Error,
+                            tcp_meta,
+                            ReadStopReason::NotStarted,
+                            Vec::new(),
+                            Some(Diagnostics {
+                                stage: "probe".into(),
+                                message: err.to_string(),
+                            }),
+                            cfg.max_bytes,
+                            cfg.read_timeout,
+                        ))
+                    }
                 }
             }
         } else {
-            match reader.read(&mut stream, None).await {
-                Ok(result) => result,
-                Err(err) => {
-                    return Ok(outcome_with_context(
-                        target,
-                        Status::Error,
-                        tcp_meta,
-                        ReadStopReason::NotStarted,
-                        Vec::new(),
-                        Some(Diagnostics {
-                            stage: "banner-read".into(),
-                            message: err.to_string(),
-                        }),
-                        cfg.max_bytes,
-                        cfg.read_timeout,
-                    ))
-                }
+            match remaining_time(deadline, cfg.read_timeout) {
+                Some(idle) if idle.is_zero() => ReadResult {
+                    bytes: Vec::new(),
+                    reason: ReadStopReason::Timeout,
+                    truncated: false,
+                },
+                Some(idle) => match reader.read_with_timeout(&mut stream, None, idle).await {
+                    Ok(result) => result,
+                    Err(err) => {
+                        return Ok(outcome_with_context(
+                            target,
+                            Status::Error,
+                            tcp_meta,
+                            ReadStopReason::NotStarted,
+                            Vec::new(),
+                            Some(Diagnostics {
+                                stage: "banner-read".into(),
+                                message: err.to_string(),
+                            }),
+                            cfg.max_bytes,
+                            cfg.read_timeout,
+                        ))
+                    }
+                },
+                None => ReadResult {
+                    bytes: Vec::new(),
+                    reason: ReadStopReason::Timeout,
+                    truncated: false,
+                },
             }
         };
 
@@ -170,6 +219,16 @@ impl TargetProcessor for DefaultProcessor {
             diagnostics: None,
         })
     }
+}
+
+fn deadline_exhausted(deadline: Instant) -> bool {
+    Instant::now() >= deadline
+}
+
+fn remaining_time(deadline: Instant, max_slice: Duration) -> Option<Duration> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .map(|remaining| remaining.min(max_slice))
 }
 
 fn outcome_with_context(
