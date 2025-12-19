@@ -17,13 +17,13 @@ pub(super) struct ClientSession {
 }
 
 impl ClientSession {
-    pub(super) fn new(cfg: &Config) -> Self {
+    pub(super) fn new(cfg: &Config, deadline: Instant) -> Self {
         Self {
             reader: BannerReader::new(cfg.max_bytes, cfg.read_timeout),
             parts: Vec::new(),
             max_bytes: cfg.max_bytes,
             truncated: false,
-            deadline: Instant::now() + cfg.overall_timeout,
+            deadline,
             idle_timeout: cfg.read_timeout,
         }
     }
@@ -135,7 +135,7 @@ mod tests {
                 format: crate::model::OutputFormat::Jsonl,
             },
         };
-        let mut session = ClientSession::new(&cfg);
+        let mut session = ClientSession::new(&cfg, Instant::now() + cfg.overall_timeout);
         session.truncated = true;
         session.parts.push(ReadResult {
             bytes: b"hello".to_vec(),

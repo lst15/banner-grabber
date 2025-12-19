@@ -3,7 +3,7 @@ use crate::model::{Config, Diagnostics, ReadStopReason, ScanOutcome, Status, Tcp
 use crate::probe::{probe_for_target, ProbeRequest};
 use crate::util::now_millis;
 use async_trait::async_trait;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tracing::debug;
@@ -29,6 +29,7 @@ impl TargetProcessor for DefaultProcessor {
         target: crate::model::Target,
         cfg: std::sync::Arc<Config>,
     ) -> anyhow::Result<ScanOutcome> {
+        let deadline = Instant::now() + cfg.overall_timeout;
         let start = now_millis();
         let tcp_start = now_millis();
         let connect_result =
@@ -97,7 +98,7 @@ impl TargetProcessor for DefaultProcessor {
 
         let mut reader = BannerReader::new(cfg.max_bytes, cfg.read_timeout);
         let read_result = if let Some(client) = client {
-            match client.execute(&mut stream, cfg.as_ref()).await {
+            match client.execute(&mut stream, cfg.as_ref(), deadline).await {
                 Ok(result) => result,
                 Err(err) => {
                     return Ok(outcome_with_context(

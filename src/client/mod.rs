@@ -17,5 +17,10 @@ pub trait Client: Send + Sync {
     fn name(&self) -> &'static str;
     fn matches(&self, target: &Target) -> bool;
 
-    async fn execute(&self, stream: &mut TcpStream, cfg: &Config) -> anyhow::Result<ReadResult>;
+    async fn execute(
+        &self,
+        stream: &mut TcpStream,
+        cfg: &Config,
+        deadline: std::time::Instant,
+    ) -> anyhow::Result<ReadResult>;
 }

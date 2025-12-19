@@ -21,8 +21,9 @@ impl Client for MysqlClient {
         &self,
         stream: &mut TcpStream,
         cfg: &Config,
+        deadline: std::time::Instant,
     ) -> anyhow::Result<crate::engine::reader::ReadResult> {
-        let mut session = ClientSession::new(cfg);
+        let mut session = ClientSession::new(cfg, deadline);
         let _ = session.read(stream, None).await?;
         Ok(session.finish())
     }
