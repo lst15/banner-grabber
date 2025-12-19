@@ -30,30 +30,8 @@ impl Client for VncClient {
             session.send(stream, &version_response.bytes).await?;
         }
 
-        let security_response = session.read_with_result(stream, None).await?;
-
-        if has_no_authentication(&security_response.bytes) {
-            let _ = session.send(stream, &[1]).await;
-            let _ = session.read(stream, None).await;
-        }
+        let _ = session.read_with_result(stream, None).await?;
 
         Ok(session.finish())
     }
-}
-
-fn has_no_authentication(bytes: &[u8]) -> bool {
-    if bytes.is_empty() {
-        return false;
-    }
-
-    if bytes.len() >= 4 {
-        let value = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        if value == 1 {
-            return true;
-        }
-    }
-
-    let security_types_len = bytes[0] as usize;
-    let security_types = bytes.get(1..1 + security_types_len).unwrap_or(&[]);
-    security_types.contains(&1)
 }
