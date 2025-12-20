@@ -43,7 +43,7 @@ pub struct Cli {
     pub max_bytes: usize,
 
     /// Mode: passive or active
-    #[arg(long = "mode", default_value_t = Mode::Passive)]
+    #[arg(long = "mode", default_value_t = Mode::Active)]
     pub mode: Mode,
 
     /// Output format
