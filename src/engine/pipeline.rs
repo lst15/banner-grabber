@@ -122,6 +122,11 @@ impl TargetProcessor for DefaultProcessor {
             for probe in probes {
                 match probe.execute(&mut stream, cfg.as_ref(), &target).await {
                     Ok(result) => {
+                        if result.bytes.is_empty() {
+                            last_probe_error = Some((probe.name().to_string(), "no bytes read".into()));
+                            continue;
+                        }
+
                         read_result = Some(result);
                         break;
                     }
