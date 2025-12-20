@@ -15,6 +15,10 @@ use super::tls::TlsProbe;
 pub trait Prober: Send + Sync {
     fn name(&self) -> &'static str;
     fn probe_bytes(&self) -> &'static [u8];
+
+    fn build_probe(&self, _target: &Target) -> std::borrow::Cow<'static, [u8]> {
+        std::borrow::Cow::Borrowed(self.probe_bytes())
+    }
     fn expected_delimiter(&self) -> Option<&'static [u8]> {
         None
     }
@@ -26,10 +30,17 @@ pub trait Prober: Send + Sync {
         fingerprint(_banner)
     }
 
-    async fn execute(&self, stream: &mut TcpStream, cfg: &Config) -> anyhow::Result<ReadResult> {
-        if !self.probe_bytes().is_empty() {
+    async fn execute(
+        &self,
+        stream: &mut TcpStream,
+        cfg: &Config,
+        target: &Target,
+    ) -> anyhow::Result<ReadResult> {
+        let probe_bytes = self.build_probe(target);
+
+        if !probe_bytes.is_empty() {
             stream
-                .write_all(self.probe_bytes())
+                .write_all(&probe_bytes)
                 .await
                 .with_context(|| format!("failed to write probe {}", self.name()))?;
         }
