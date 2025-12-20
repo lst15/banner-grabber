@@ -1,6 +1,8 @@
 use crate::model::{Config, Target};
 use async_trait::async_trait;
 use tokio::net::TcpStream;
+use tokio::process::Command;
+use tokio::time::timeout;
 
 use crate::clients::session::ClientSession;
 use crate::clients::Client;
@@ -40,6 +42,31 @@ impl Client for SmbClient {
         let mut session = ClientSession::new(cfg);
         session.send(stream, SMB_NEGOTIATE_REQUEST).await?;
         session.read(stream, None).await?;
+
+        if let Ok(peer) = stream.peer_addr() {
+            if let Some(listing) = anonymous_list_users(&peer.ip().to_string(), cfg.read_timeout).await {
+                session.append_metadata(listing);
+            }
+        }
+
         Ok(session.finish())
     }
+}
+
+async fn anonymous_list_users(host: &str, timeout_dur: std::time::Duration) -> Option<String> {
+    let mut cmd = Command::new("smbclient");
+    cmd.arg("-N")
+        .arg("-L")
+        .arg(format!("//{host}"));
+
+    let output = timeout(timeout_dur, cmd.output()).await.ok()?.ok()?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !stdout.is_empty() {
+            return Some(format!("Anonymous smbclient listing:\n{stdout}"));
+        }
+    }
+
+    None
 }
