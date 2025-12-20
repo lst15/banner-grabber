@@ -26,7 +26,7 @@ Optional flags you may want to tweak:
 - `--concurrency <N>`: concurrent connections limit (default 64)
 - `--rate <N>`: new connections per second (default 64)
 - `--connect-timeout <ms>` / `--read-timeout <ms>` / `--overall-timeout <ms>`
-- `--mode passive|active`: whether to send protocol-specific probes (default passive)
+- `--mode passive|active`: whether to send protocol-specific probes (default active)
 - `--output jsonl|pretty|csv` or `--pretty` for log-style output
 
 ## Input file format
