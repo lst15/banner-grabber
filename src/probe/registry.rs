@@ -59,22 +59,27 @@ static REDIS_PROBE: RedisProbe = RedisProbe;
 static TLS_PROBE: TlsProbe = TlsProbe;
 static PROBES: [&dyn Prober; 2] = [&REDIS_PROBE, &TLS_PROBE];
 
-pub fn probe_for_target(req: &ProbeRequest) -> Option<&'static dyn Prober> {
+pub fn probes_for_target(req: &ProbeRequest) -> Vec<&'static dyn Prober> {
     if matches!(req.mode, ScanMode::Passive) {
-        return None;
+        return Vec::new();
     }
+
+    let mut probes: Vec<&'static dyn Prober> = Vec::new();
 
     if HTTP_PROBE.matches(&req.target) {
-        return Some(&HTTP_PROBE);
+        probes.push(&HTTP_PROBE);
     }
 
-    if let Some(probe) = PROBES
-        .iter()
-        .copied()
-        .find(|probe| probe.matches(&req.target))
-    {
-        return Some(probe);
+    probes.extend(
+        PROBES
+            .iter()
+            .copied()
+            .filter(|probe| probe.matches(&req.target)),
+    );
+
+    if matches!(req.mode, ScanMode::Active) && !probes.iter().any(|p| p.name() == HTTP_PROBE.name()) {
+        probes.push(&HTTP_PROBE);
     }
 
-    matches!(req.mode, ScanMode::Active).then_some(&HTTP_PROBE as &'static dyn Prober)
+    probes
 }

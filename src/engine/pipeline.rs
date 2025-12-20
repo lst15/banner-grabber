@@ -1,6 +1,6 @@
 use crate::client::{client_for_target, ClientRequest};
 use crate::model::{Config, Diagnostics, ReadStopReason, ScanMode, ScanOutcome, Status, TcpMeta};
-use crate::probe::{probe_for_target, ProbeRequest};
+use crate::probe::{probes_for_target, ProbeRequest};
 use crate::util::now_millis;
 use async_trait::async_trait;
 use std::time::Duration;
@@ -93,7 +93,7 @@ impl TargetProcessor for DefaultProcessor {
             target: target.clone(),
             mode: cfg.mode,
         };
-        let probe = probe_for_target(&probe_req);
+        let probes = probes_for_target(&probe_req);
 
         let mut reader = BannerReader::new(cfg.max_bytes, cfg.read_timeout);
         let read_result = if let Some(client) = client {
@@ -115,10 +115,27 @@ impl TargetProcessor for DefaultProcessor {
                     ))
                 }
             }
-        } else if let Some(probe) = probe {
-            match probe.execute(&mut stream, cfg.as_ref(), &target).await {
-                Ok(result) => result,
-                Err(err) => {
+        } else if !probes.is_empty() {
+            let mut last_probe_error: Option<(String, String)> = None;
+            let mut read_result = None;
+
+            for probe in probes {
+                match probe.execute(&mut stream, cfg.as_ref(), &target).await {
+                    Ok(result) => {
+                        read_result = Some(result);
+                        break;
+                    }
+                    Err(err) => last_probe_error = Some((probe.name().to_string(), err.to_string())),
+                }
+            }
+
+            match read_result {
+                Some(result) => result,
+                None => {
+                    let (stage, message) = last_probe_error.unwrap_or_else(|| {
+                        ("probe".into(), "no probes available".into())
+                    });
+
                     return Ok(outcome_with_context(
                         target,
                         Status::Error,
@@ -126,12 +143,12 @@ impl TargetProcessor for DefaultProcessor {
                         ReadStopReason::NotStarted,
                         Vec::new(),
                         Some(Diagnostics {
-                            stage: "probe".into(),
-                            message: err.to_string(),
+                            stage: format!("probe:{}", stage),
+                            message,
                         }),
                         cfg.max_bytes,
                         cfg.read_timeout,
-                    ))
+                    ));
                 }
             }
         } else {
