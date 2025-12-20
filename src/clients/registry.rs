@@ -15,12 +15,15 @@ use super::smtp::SmtpClient;
 use super::ssh::SshClient;
 use super::telnet::TelnetClient;
 use super::vnc::VncClient;
-use crate::clients::Client;
+use crate::clients::NtpClient;
+use crate::clients::{Client, UdpClient};
 
 pub struct ClientRequest {
     pub target: Target,
     pub mode: ScanMode,
 }
+
+static NTP_CLIENT: NtpClient = NtpClient;
 
 static FTP_CLIENT: FtpClient = FtpClient;
 static IMAP_CLIENT: ImapClient = ImapClient;
@@ -56,12 +59,25 @@ static CLIENTS: [&dyn Client; 15] = [
     &VNC_CLIENT,
 ];
 
+static UDP_CLIENTS: [&dyn UdpClient; 1] = [&NTP_CLIENT];
+
 pub fn client_for_target(req: &ClientRequest) -> Option<&'static dyn Client> {
     if !matches!(req.mode, ScanMode::Active) {
         return None;
     }
 
     CLIENTS
+        .iter()
+        .copied()
+        .find(|client| client.matches(&req.target))
+}
+
+pub fn udp_client_for_target(req: &ClientRequest) -> Option<&'static dyn UdpClient> {
+    if !matches!(req.mode, ScanMode::Active) {
+        return None;
+    }
+
+    UDP_CLIENTS
         .iter()
         .copied()
         .find(|client| client.matches(&req.target))

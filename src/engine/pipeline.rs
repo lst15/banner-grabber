@@ -1,4 +1,4 @@
-use crate::clients::{client_for_target, ClientRequest};
+use crate::clients::{client_for_target, udp_client_for_target, ClientRequest};
 use crate::model::{Config, Diagnostics, ReadStopReason, ScanMode, ScanOutcome, Status, TcpMeta};
 use crate::probe::{probe_for_target, ProbeRequest};
 use crate::util::now_millis;
@@ -32,6 +32,58 @@ impl TargetProcessor for DefaultProcessor {
         let start = now_millis();
         let tcp_start = now_millis();
         let connect_timeout = adjusted_connect_timeout(cfg.as_ref(), &target);
+
+        let client_req = ClientRequest {
+            target: target.clone(),
+            mode: cfg.mode,
+        };
+        if let Some(udp_client) = udp_client_for_target(&client_req) {
+            let udp_start = now_millis();
+
+            let read_result = match udp_client.execute(&target, cfg.as_ref()).await {
+                Ok(result) => result,
+                Err(err) => {
+                    return Ok(outcome_with_context(
+                        target,
+                        Status::Error,
+                        TcpMeta {
+                            connect_ms: Some(now_millis() - udp_start),
+                            error: Some(err.to_string()),
+                        },
+                        ReadStopReason::NotStarted,
+                        Vec::new(),
+                        Some(Diagnostics {
+                            stage: format!("clients:{}", udp_client.name()),
+                            message: err.to_string(),
+                        }),
+                        cfg.max_bytes,
+                        cfg.read_timeout,
+                    ))
+                }
+            };
+
+            let status = if matches!(read_result.reason, ReadStopReason::Timeout) {
+                Status::Timeout
+            } else {
+                Status::Open
+            };
+            let banner =
+                BannerReader::new(cfg.max_bytes, cfg.read_timeout).render(read_result.clone());
+            let fingerprint = crate::probe::fingerprint(&read_result);
+            let elapsed = now_millis() - udp_start;
+
+            return Ok(ScanOutcome {
+                target: target.view(),
+                status,
+                tcp: TcpMeta {
+                    connect_ms: Some(elapsed),
+                    error: None,
+                },
+                banner,
+                fingerprint,
+                diagnostics: None,
+            });
+        }
         let connect_result = timeout(connect_timeout, TcpStream::connect(target.resolved)).await;
 
         let (mut stream, tcp_meta) = match connect_result {
@@ -84,10 +136,6 @@ impl TargetProcessor for DefaultProcessor {
         };
         let status = Status::Open;
 
-        let client_req = ClientRequest {
-            target: target.clone(),
-            mode: cfg.mode,
-        };
         let client = client_for_target(&client_req);
         let probe_req = ProbeRequest {
             target: target.clone(),
