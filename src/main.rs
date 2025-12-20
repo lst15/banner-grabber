@@ -1,5 +1,5 @@
 mod cli;
-mod client;
+mod clients;
 mod engine;
 mod input;
 mod model;

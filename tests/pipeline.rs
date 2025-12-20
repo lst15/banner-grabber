@@ -103,8 +103,8 @@ async fn passive_mode_does_not_send_active_probe_on_timeout() {
         .await;
         match read {
             Ok(0) => {}
-            Ok(n) => panic!("unexpected data from client: {} bytes", n),
-            Err(_) => panic!("client never closed connection"),
+            Ok(n) => panic!("unexpected data from clients: {} bytes", n),
+            Err(_) => panic!("clients never closed connection"),
         }
     });
 

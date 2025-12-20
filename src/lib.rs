@@ -1,5 +1,5 @@
 pub mod cli;
-pub mod client;
+pub mod clients;
 pub mod engine;
 pub mod input;
 pub mod model;

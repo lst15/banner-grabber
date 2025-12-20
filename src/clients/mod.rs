@@ -6,7 +6,7 @@ mod mqtt;
 mod mssql;
 mod mysql;
 mod pop3;
-mod postgres;
+mod binaries::postgres;
 mod redis;
 mod registry;
 mod session;
@@ -15,6 +15,9 @@ mod smtp;
 mod ssh;
 mod telnet;
 mod vnc;
+#[path = "line-based.rs"]
+mod line_based;
+mod stateful;
 
 pub use registry::{client_for_target, ClientRequest};
 

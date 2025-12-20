@@ -51,7 +51,7 @@ impl ClientSession {
         stream
             .write_all(bytes)
             .await
-            .with_context(|| "failed to write client command")
+            .with_context(|| "failed to write clients command")
     }
 
     pub(super) fn append_metadata(&mut self, bytes: impl Into<Vec<u8>>) {

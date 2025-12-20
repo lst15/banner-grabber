@@ -1,4 +1,4 @@
-use crate::client::{client_for_target, ClientRequest};
+use crate::clients::{client_for_target, ClientRequest};
 use crate::model::{Config, Diagnostics, ReadStopReason, ScanMode, ScanOutcome, Status, TcpMeta};
 use crate::probe::{probe_for_target, ProbeRequest};
 use crate::util::now_millis;
@@ -107,7 +107,7 @@ impl TargetProcessor for DefaultProcessor {
                         ReadStopReason::NotStarted,
                         Vec::new(),
                         Some(Diagnostics {
-                            stage: format!("client:{}", client.name()),
+                            stage: format!("clients:{}", client.name()),
                             message: err.to_string(),
                         }),
                         cfg.max_bytes,
