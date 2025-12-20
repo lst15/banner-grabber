@@ -2,10 +2,10 @@ use crate::model::{Config, Target};
 use async_trait::async_trait;
 use tokio::net::TcpStream;
 
-use super::session::ClientSession;
-use super::Client;
+use crate::clients::session::ClientSession;
+use crate::clients::Client;
 
-pub(super) struct MemcachedClient;
+pub(crate) struct MemcachedClient;
 
 #[async_trait]
 impl Client for MemcachedClient {
