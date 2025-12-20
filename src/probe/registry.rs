@@ -2,6 +2,7 @@ use crate::engine::reader::{BannerReader, ReadResult};
 use crate::model::{Config, ScanMode, Target};
 use anyhow::Context;
 use async_trait::async_trait;
+use std::borrow::Cow;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
@@ -26,10 +27,21 @@ pub trait Prober: Send + Sync {
         fingerprint(_banner)
     }
 
-    async fn execute(&self, stream: &mut TcpStream, cfg: &Config) -> anyhow::Result<ReadResult> {
-        if !self.probe_bytes().is_empty() {
+    fn probe_bytes_for(&self, target: &Target) -> Cow<'static, [u8]> {
+        let _ = target;
+        Cow::Borrowed(self.probe_bytes())
+    }
+
+    async fn execute(
+        &self,
+        stream: &mut TcpStream,
+        cfg: &Config,
+        target: &Target,
+    ) -> anyhow::Result<ReadResult> {
+        let probe_bytes = self.probe_bytes_for(target);
+        if !probe_bytes.is_empty() {
             stream
-                .write_all(self.probe_bytes())
+                .write_all(&probe_bytes)
                 .await
                 .with_context(|| format!("failed to write probe {}", self.name()))?;
         }

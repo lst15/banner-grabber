@@ -58,7 +58,8 @@ async fn http_probe_runs_on_nonstandard_ports() {
         socket.readable().await.unwrap();
         let n = socket.read(&mut buf).await.unwrap();
         let request = std::str::from_utf8(&buf[..n]).unwrap();
-        assert!(request.starts_with("GET / HTTP/1.0"));
+        assert!(request.starts_with("GET / HTTP/1.1"));
+        assert!(request.contains("Host: 127.0.0.1"));
         socket
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
             .await

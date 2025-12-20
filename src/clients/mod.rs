@@ -5,9 +5,9 @@ mod registry;
 mod session;
 mod stateful;
 
+pub use binaries::ntp::NtpClient;
 pub use binaries::{mongodb, mssql, mysql, postgres};
 pub use line_based::{ftp, imap, memcached, mqtt, pop3, redis, smtp, telnet};
-pub use binaries::ntp::NtpClient;
 pub use registry::{client_for_target, udp_client_for_target, ClientRequest};
 pub use stateful::{smb, ssh, vnc};
 

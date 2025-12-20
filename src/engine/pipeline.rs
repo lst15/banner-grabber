@@ -164,7 +164,7 @@ impl TargetProcessor for DefaultProcessor {
                 }
             }
         } else if let Some(probe) = probe {
-            match probe.execute(&mut stream, cfg.as_ref()).await {
+            match probe.execute(&mut stream, cfg.as_ref(), &target).await {
                 Ok(result) => result,
                 Err(err) => {
                     return Ok(outcome_with_context(
