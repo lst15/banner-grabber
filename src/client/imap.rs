@@ -26,6 +26,13 @@ impl Client for ImapClient {
         session.read(stream, Some(b"\n")).await?;
         session.send(stream, b"a001 CAPABILITY\r\n").await?;
         session.read(stream, None).await?;
+
+        session.send(stream, b"a002 NAMESPACE\r\n").await?;
+        session.read(stream, None).await?;
+        //
+        // // session.send(stream, b"a002 ID (\"name\" \"fingerprint\")\r\n").await?;
+        // session.read(stream, None).await?;
+
         Ok(session.finish())
     }
 }
