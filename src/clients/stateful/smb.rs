@@ -2,10 +2,10 @@ use crate::model::{Config, Target};
 use async_trait::async_trait;
 use tokio::net::TcpStream;
 
-use super::session::ClientSession;
-use super::Client;
+use crate::clients::session::ClientSession;
+use crate::clients::Client;
 
-pub(super) struct SmbClient;
+pub(crate) struct SmbClient;
 
 // SMB Negotiate Protocol Request covering SMB1 and SMB2 dialects.
 // Adapted from common version-scanning probes that include SMB 2.002 and SMB 2.??? dialect strings.

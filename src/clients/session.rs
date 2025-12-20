@@ -4,7 +4,7 @@ use anyhow::Context;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
-pub(super) struct ClientSession {
+pub(crate) struct ClientSession {
     reader: BannerReader,
     parts: Vec<ReadResult>,
     max_bytes: usize,

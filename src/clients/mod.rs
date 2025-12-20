@@ -1,25 +1,14 @@
-mod ftp;
-mod imap;
-mod memcached;
-mod mongodb;
-mod mqtt;
-mod mssql;
-mod mysql;
-mod pop3;
-mod binaries::postgres;
-mod redis;
+mod binaries;
+#[path = "line-based/mod.rs"]
+mod line_based;
 mod registry;
 mod session;
-mod smb;
-mod smtp;
-mod ssh;
-mod telnet;
-mod vnc;
-#[path = "line-based.rs"]
-mod line_based;
 mod stateful;
 
+pub use binaries::{mongodb, mssql, mysql, postgres};
+pub use line_based::{ftp, imap, memcached, mqtt, pop3, redis, smtp, telnet};
 pub use registry::{client_for_target, ClientRequest};
+pub use stateful::{smb, ssh, vnc};
 
 use crate::engine::reader::ReadResult;
 use crate::model::{Config, Target};

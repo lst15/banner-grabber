@@ -15,7 +15,7 @@ use super::smtp::SmtpClient;
 use super::ssh::SshClient;
 use super::telnet::TelnetClient;
 use super::vnc::VncClient;
-use super::Client;
+use crate::clients::Client;
 
 pub struct ClientRequest {
     pub target: Target,

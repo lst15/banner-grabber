@@ -4,10 +4,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
-use super::session::ClientSession;
-use super::Client;
+use crate::clients::session::ClientSession;
+use crate::clients::Client;
 
-pub(super) struct VncClient;
+pub(crate) struct VncClient;
 
 const VNC_PORT_START: u16 = 5900;
 const VNC_PORT_END: u16 = 5909;
