@@ -7,7 +7,6 @@ use tokio::net::TcpStream;
 
 use super::fingerprint;
 use super::http::HttpProbe;
-use super::is_probably_tls_port;
 use super::redis::RedisProbe;
 use super::tls::TlsProbe;
 
@@ -58,11 +57,15 @@ pub struct ProbeRequest {
 static HTTP_PROBE: HttpProbe = HttpProbe;
 static REDIS_PROBE: RedisProbe = RedisProbe;
 static TLS_PROBE: TlsProbe = TlsProbe;
-static PROBES: [&dyn Prober; 3] = [&REDIS_PROBE, &TLS_PROBE, &HTTP_PROBE];
+static PROBES: [&dyn Prober; 2] = [&REDIS_PROBE, &TLS_PROBE];
 
 pub fn probe_for_target(req: &ProbeRequest) -> Option<&'static dyn Prober> {
     if matches!(req.mode, ScanMode::Passive) {
         return None;
+    }
+
+    if HTTP_PROBE.matches(&req.target) {
+        return Some(&HTTP_PROBE);
     }
 
     if let Some(probe) = PROBES
@@ -73,13 +76,5 @@ pub fn probe_for_target(req: &ProbeRequest) -> Option<&'static dyn Prober> {
         return Some(probe);
     }
 
-    matches!(req.mode, ScanMode::Active)
-        .then(|| {
-            if is_probably_tls_port(req.target.resolved.port()) {
-                None
-            } else {
-                Some(&HTTP_PROBE as &'static dyn Prober)
-            }
-        })
-        .flatten()
+    matches!(req.mode, ScanMode::Active).then_some(&HTTP_PROBE as &'static dyn Prober)
 }
