@@ -4,7 +4,7 @@ use crate::model::{Config, Target};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use std::sync::OnceLock;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 pub(super) struct HttpsProbe;
@@ -55,8 +55,70 @@ impl Prober for HttpsProbe {
             .context("failed to write HTTPS request")?;
 
         let mut reader = BannerReader::new(cfg.max_bytes, cfg.read_timeout);
-        reader.read(&mut tls_stream, None).await
+        let mut result = reader.read(&mut tls_stream, None).await?;
+
+        if let Some(content_length) = parse_content_length(&result.bytes) {
+            // Respect the remaining budget when attempting to pull the body.
+            let available = cfg.max_bytes.saturating_sub(result.bytes.len());
+            if available == 0 {
+                result.truncated = true;
+                result.reason = crate::model::ReadStopReason::SizeLimit;
+                return Ok(result);
+            }
+
+            let expected = content_length.min(available);
+            let mut buf = vec![0u8; expected];
+            let mut read = 0usize;
+
+            while read < expected {
+                match tokio::time::timeout(cfg.read_timeout, tls_stream.read(&mut buf[read..]))
+                    .await
+                {
+                    Ok(Ok(0)) => {
+                        result.reason = crate::model::ReadStopReason::ConnectionClosed;
+                        break;
+                    }
+                    Ok(Ok(n)) => {
+                        read += n;
+                    }
+                    Ok(Err(err)) => return Err(err.into()),
+                    Err(_) => {
+                        result.reason = crate::model::ReadStopReason::Timeout;
+                        break;
+                    }
+                }
+            }
+
+            if content_length > available {
+                result.truncated = true;
+                result.reason = crate::model::ReadStopReason::SizeLimit;
+            } else if read == expected {
+                // We successfully pulled the entire expected body.
+                result.reason = crate::model::ReadStopReason::ConnectionClosed;
+            }
+
+            result.bytes.extend_from_slice(&buf[..read]);
+        }
+
+        Ok(result)
     }
+}
+
+fn parse_content_length(bytes: &[u8]) -> Option<usize> {
+    let header_end = bytes.windows(4).position(|w| w == b"\r\n\r\n")?;
+    let headers = &bytes[..header_end];
+    for line in headers.split(|b| *b == b'\n') {
+        if let Some(rest) = line
+            .strip_prefix(b"Content-Length:")
+            .or_else(|| line.strip_prefix(b"content-length:"))
+        {
+            let value = std::str::from_utf8(rest).ok()?.trim();
+            if let Ok(len) = value.parse::<usize>() {
+                return Some(len);
+            }
+        }
+    }
+    None
 }
 
 fn https_connector() -> anyhow::Result<&'static tokio_native_tls::TlsConnector> {
