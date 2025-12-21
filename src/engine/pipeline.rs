@@ -47,7 +47,7 @@ impl TargetProcessor for DefaultProcessor {
             return Ok(outcome);
         }
 
-        let (mut stream, tcp_meta) =
+        let (stream, tcp_meta) =
             match connect_tcp(target.clone(), config.as_ref(), connect_timeout, tcp_start).await? {
                 Ok(connection) => connection,
                 Err(outcome) => return Ok(outcome),
@@ -60,7 +60,7 @@ impl TargetProcessor for DefaultProcessor {
         };
 
         let read_result = match process_tcp_stream(
-            &mut stream,
+            stream,
             target.clone(),
             config.as_ref(),
             &client_request,
@@ -205,7 +205,7 @@ async fn connect_tcp(
 }
 
 async fn process_tcp_stream(
-    stream: &mut TcpStream,
+    stream: TcpStream,
     target: crate::model::Target,
     config: &Config,
     client_request: &ClientRequest,
@@ -216,7 +216,8 @@ async fn process_tcp_stream(
     let probe = probe_for_target(probe_request);
 
     if let Some(client) = client {
-        match client.execute(stream, config).await {
+        let mut stream = stream;
+        match client.execute(&mut stream, config).await {
             Ok(result) => Ok(result),
             Err(err) => Err(build_outcome_with_context(
                 target,
@@ -234,7 +235,7 @@ async fn process_tcp_stream(
             )),
         }
     } else if let Some(probe) = probe {
-        match probe.execute(stream, config).await {
+        match probe.execute(stream, config, &target).await {
             Ok(result) => Ok(result),
             Err(err) => Err(build_outcome_with_context(
                 target,
@@ -252,8 +253,9 @@ async fn process_tcp_stream(
             )),
         }
     } else {
+        let mut stream = stream;
         let mut reader = BannerReader::new(config.max_bytes, config.read_timeout);
-        match reader.read(stream, None).await {
+        match reader.read(&mut stream, None).await {
             Ok(result) => Ok(result),
             Err(err) => Err(build_outcome_with_context(
                 target,
