@@ -64,9 +64,12 @@ impl Engine {
                 .await;
                 match res {
                     Ok(Ok(outcome)) => sink.emit(outcome).await?,
-                    Ok(Err(err)) => sink.emit_error(target, err.to_string()).await?,
+                    Ok(Err(err)) => {
+                        sink.emit_error(target, &cfg.protocol, err.to_string())
+                            .await?
+                    }
                     Err(_) => {
-                        sink.emit_error(target, "overall timeout".to_string())
+                        sink.emit_error(target, &cfg.protocol, "overall timeout".to_string())
                             .await?
                     }
                 }

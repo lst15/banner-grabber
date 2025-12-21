@@ -9,7 +9,9 @@ use crate::clients::Client;
 
 pub(crate) struct VncClient;
 
+#[allow(dead_code)]
 const VNC_PORT_START: u16 = 5900;
+#[allow(dead_code)]
 const VNC_PORT_END: u16 = 5909;
 
 #[async_trait]
@@ -215,6 +217,7 @@ mod tests {
             overall_timeout: Duration::from_millis(1000),
             max_bytes: 128,
             mode: ScanMode::Active,
+            protocol: crate::model::Protocol::Vnc,
             output: OutputConfig {
                 format: OutputFormat::Pretty,
             },

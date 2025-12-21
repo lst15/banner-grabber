@@ -1,4 +1,4 @@
-use crate::model::{ScanMode, Target};
+use crate::model::{Protocol, ScanMode, Target};
 
 use super::ftp::FtpClient;
 use super::imap::ImapClient;
@@ -19,8 +19,10 @@ use crate::clients::NtpClient;
 use crate::clients::{Client, UdpClient};
 
 pub struct ClientRequest {
+    #[allow(dead_code)]
     pub target: Target,
     pub mode: ScanMode,
+    pub protocol: Protocol,
 }
 
 static NTP_CLIENT: NtpClient = NtpClient;
@@ -41,35 +43,29 @@ static SSH_CLIENT: SshClient = SshClient;
 static TELNET_CLIENT: TelnetClient = TelnetClient;
 static VNC_CLIENT: VncClient = VncClient;
 
-static CLIENTS: [&dyn Client; 15] = [
-    &FTP_CLIENT,
-    &IMAP_CLIENT,
-    &MEMCACHED_CLIENT,
-    &MONGODB_CLIENT,
-    &MQTT_CLIENT,
-    &MSSQL_CLIENT,
-    &MYSQL_CLIENT,
-    &POP3_CLIENT,
-    &POSTGRES_CLIENT,
-    &REDIS_CLIENT,
-    &SMTP_CLIENT,
-    &SMB_CLIENT,
-    &SSH_CLIENT,
-    &TELNET_CLIENT,
-    &VNC_CLIENT,
-];
-
-static UDP_CLIENTS: [&dyn UdpClient; 1] = [&NTP_CLIENT];
-
 pub fn client_for_target(req: &ClientRequest) -> Option<&'static dyn Client> {
     if !matches!(req.mode, ScanMode::Active) {
         return None;
     }
 
-    CLIENTS
-        .iter()
-        .copied()
-        .find(|client| client.matches(&req.target))
+    match req.protocol {
+        Protocol::Ftp => Some(&FTP_CLIENT),
+        Protocol::Imap => Some(&IMAP_CLIENT),
+        Protocol::Memcached => Some(&MEMCACHED_CLIENT),
+        Protocol::Mongodb => Some(&MONGODB_CLIENT),
+        Protocol::Mqtt => Some(&MQTT_CLIENT),
+        Protocol::Mssql => Some(&MSSQL_CLIENT),
+        Protocol::Mysql => Some(&MYSQL_CLIENT),
+        Protocol::Pop3 => Some(&POP3_CLIENT),
+        Protocol::Postgres => Some(&POSTGRES_CLIENT),
+        Protocol::Redis => Some(&REDIS_CLIENT),
+        Protocol::Smb => Some(&SMB_CLIENT),
+        Protocol::Smtp => Some(&SMTP_CLIENT),
+        Protocol::Ssh => Some(&SSH_CLIENT),
+        Protocol::Telnet => Some(&TELNET_CLIENT),
+        Protocol::Vnc => Some(&VNC_CLIENT),
+        _ => None,
+    }
 }
 
 pub fn udp_client_for_target(req: &ClientRequest) -> Option<&'static dyn UdpClient> {
@@ -77,8 +73,8 @@ pub fn udp_client_for_target(req: &ClientRequest) -> Option<&'static dyn UdpClie
         return None;
     }
 
-    UDP_CLIENTS
-        .iter()
-        .copied()
-        .find(|client| client.matches(&req.target))
+    match req.protocol {
+        Protocol::Ntp => Some(&NTP_CLIENT),
+        _ => None,
+    }
 }

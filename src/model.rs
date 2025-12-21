@@ -29,6 +29,7 @@ pub struct Config {
     pub overall_timeout: Duration,
     pub max_bytes: usize,
     pub mode: ScanMode,
+    pub protocol: Protocol,
     pub output: OutputConfig,
 }
 
@@ -44,6 +45,30 @@ pub struct OutputConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum Protocol {
+    Ftp,
+    Http,
+    Https,
+    Imap,
+    Memcached,
+    Mongodb,
+    Mqtt,
+    Mssql,
+    Mysql,
+    Pop3,
+    Postgres,
+    Redis,
+    Smb,
+    Smtp,
+    Ssh,
+    Telnet,
+    Tls,
+    Vnc,
+    Ntp,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ValueEnum)]
 pub enum OutputFormat {
     Jsonl,
     Pretty,
@@ -55,6 +80,33 @@ impl fmt::Display for OutputFormat {
             OutputFormat::Jsonl => write!(f, "jsonl"),
             OutputFormat::Pretty => write!(f, "pretty"),
         }
+    }
+}
+
+impl fmt::Display for Protocol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            Protocol::Ftp => "ftp",
+            Protocol::Http => "http",
+            Protocol::Https => "https",
+            Protocol::Imap => "imap",
+            Protocol::Memcached => "memcached",
+            Protocol::Mongodb => "mongodb",
+            Protocol::Mqtt => "mqtt",
+            Protocol::Mssql => "mssql",
+            Protocol::Mysql => "mysql",
+            Protocol::Pop3 => "pop3",
+            Protocol::Postgres => "postgres",
+            Protocol::Redis => "redis",
+            Protocol::Smb => "smb",
+            Protocol::Smtp => "smtp",
+            Protocol::Ssh => "ssh",
+            Protocol::Telnet => "telnet",
+            Protocol::Tls => "tls",
+            Protocol::Vnc => "vnc",
+            Protocol::Ntp => "ntp",
+        };
+        write!(f, "{}", label)
     }
 }
 
@@ -101,6 +153,18 @@ pub struct Fingerprint {
     pub protocol: Option<String>,
     pub score: f32,
     pub fields: BTreeMap<String, String>,
+}
+
+impl Fingerprint {
+    pub fn from_protocol(protocol: &Protocol) -> Self {
+        let mut fields = BTreeMap::new();
+        fields.insert("source".into(), "user-provided".into());
+        Fingerprint {
+            protocol: Some(protocol.to_string()),
+            score: 1.0,
+            fields,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
