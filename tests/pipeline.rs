@@ -37,6 +37,7 @@ async fn simulated_service_requires_probe() {
         overall_timeout: std::time::Duration::from_millis(1000),
         max_bytes: 128,
         mode: banner_grabber::model::ScanMode::Active,
+        protocol: banner_grabber::model::Protocol::Redis,
         output: banner_grabber::model::OutputConfig {
             format: banner_grabber::model::OutputFormat::Pretty,
         },
@@ -79,6 +80,7 @@ async fn http_probe_runs_on_nonstandard_ports() {
         overall_timeout: std::time::Duration::from_millis(1500),
         max_bytes: 128,
         mode: banner_grabber::model::ScanMode::Active,
+        protocol: banner_grabber::model::Protocol::Http,
         output: banner_grabber::model::OutputConfig {
             format: banner_grabber::model::OutputFormat::Pretty,
         },
@@ -122,6 +124,7 @@ async fn passive_mode_does_not_send_active_probe_on_timeout() {
         overall_timeout: std::time::Duration::from_millis(700),
         max_bytes: 128,
         mode: banner_grabber::model::ScanMode::Passive,
+        protocol: banner_grabber::model::Protocol::Http,
         output: banner_grabber::model::OutputConfig {
             format: banner_grabber::model::OutputFormat::Pretty,
         },

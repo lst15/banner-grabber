@@ -1,13 +1,11 @@
 use crate::engine::reader::{BannerReader, ReadResult};
-use crate::model::{Config, ScanMode, Target};
+use crate::model::{Config, Protocol, ScanMode, Target};
 use anyhow::Context;
 use async_trait::async_trait;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
-use super::fingerprint;
 use super::http::HttpProbe;
-use super::is_probably_tls_port;
 use super::redis::RedisProbe;
 use super::tls::TlsProbe;
 
@@ -19,12 +17,8 @@ pub trait Prober: Send + Sync {
         None
     }
 
-    fn matches(&self, target: &Target) -> bool;
-
     #[allow(dead_code)]
-    fn fingerprint(&self, _banner: &ReadResult) -> crate::model::Fingerprint {
-        fingerprint(_banner)
-    }
+    fn matches(&self, target: &Target) -> bool;
 
     async fn execute(&self, stream: &mut TcpStream, cfg: &Config) -> anyhow::Result<ReadResult> {
         if !self.probe_bytes().is_empty() {
@@ -40,35 +34,25 @@ pub trait Prober: Send + Sync {
 }
 
 pub struct ProbeRequest {
+    #[allow(dead_code)]
     pub target: Target,
     pub mode: ScanMode,
+    pub protocol: Protocol,
 }
 
 static HTTP_PROBE: HttpProbe = HttpProbe;
 static REDIS_PROBE: RedisProbe = RedisProbe;
 static TLS_PROBE: TlsProbe = TlsProbe;
-static PROBES: [&dyn Prober; 3] = [&REDIS_PROBE, &TLS_PROBE, &HTTP_PROBE];
 
 pub fn probe_for_target(req: &ProbeRequest) -> Option<&'static dyn Prober> {
     if matches!(req.mode, ScanMode::Passive) {
         return None;
     }
 
-    if let Some(probe) = PROBES
-        .iter()
-        .copied()
-        .find(|probe| probe.matches(&req.target))
-    {
-        return Some(probe);
+    match req.protocol {
+        Protocol::Http => Some(&HTTP_PROBE as &'static dyn Prober),
+        Protocol::Https | Protocol::Tls => Some(&TLS_PROBE as &'static dyn Prober),
+        Protocol::Redis => Some(&REDIS_PROBE as &'static dyn Prober),
+        _ => None,
     }
-
-    matches!(req.mode, ScanMode::Active)
-        .then(|| {
-            if is_probably_tls_port(req.target.resolved.port()) {
-                None
-            } else {
-                Some(&HTTP_PROBE as &'static dyn Prober)
-            }
-        })
-        .flatten()
 }

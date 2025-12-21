@@ -1,4 +1,4 @@
-use crate::model::OutputFormat;
+use crate::model::{OutputFormat, Protocol};
 use clap::{ArgAction, Parser, ValueEnum};
 use std::fmt;
 use std::time::Duration;
@@ -53,6 +53,10 @@ pub struct Cli {
     /// Enable pretty logging output instead of JSONL
     #[arg(long = "pretty", action = ArgAction::SetTrue)]
     pub pretty: bool,
+
+    /// Protocol to probe (e.g. http, https, ftp)
+    #[arg(long = "protocol", value_enum)]
+    pub protocol: Protocol,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -85,6 +89,7 @@ impl Cli {
             mode,
             output,
             pretty,
+            protocol,
         } = self;
 
         if host.is_none() && input.is_none() {
@@ -101,6 +106,10 @@ impl Cli {
 
         if rate == 0 {
             anyhow::bail!("rate must be greater than zero");
+        }
+
+        if input.is_some() && port.is_none() {
+            anyhow::bail!("--port is required when using --input");
         }
 
         let target = match (host.clone(), port, input.is_some()) {
@@ -146,6 +155,7 @@ impl Cli {
                 Mode::Passive => crate::model::ScanMode::Passive,
                 Mode::Active => crate::model::ScanMode::Active,
             },
+            protocol,
             output: crate::model::OutputConfig {
                 format: if pretty { OutputFormat::Pretty } else { output },
             },
@@ -172,6 +182,7 @@ mod tests {
             mode: Mode::Active,
             output: OutputFormat::Jsonl,
             pretty: false,
+            protocol: Protocol::Ftp,
         };
 
         let cfg = cli.into_config().expect("config should build");
@@ -193,6 +204,7 @@ mod tests {
             mode: Mode::Passive,
             output: OutputFormat::Jsonl,
             pretty: false,
+            protocol: Protocol::Https,
         };
 
         let cfg = cli.into_config().expect("config should build");

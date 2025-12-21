@@ -1,4 +1,4 @@
-use super::{is_probably_tls_port, Prober};
+use super::Prober;
 use crate::model::Target;
 
 pub(super) struct TlsProbe;
@@ -16,6 +16,6 @@ impl Prober for TlsProbe {
     }
 
     fn matches(&self, target: &Target) -> bool {
-        is_probably_tls_port(target.resolved.port())
+        target.resolved.port() > 0 && target.resolved.port() <= u16::MAX
     }
 }

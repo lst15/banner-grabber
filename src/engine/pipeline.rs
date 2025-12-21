@@ -1,5 +1,8 @@
 use crate::clients::{client_for_target, udp_client_for_target, ClientRequest};
-use crate::model::{Config, Diagnostics, ReadStopReason, ScanMode, ScanOutcome, Status, TcpMeta};
+use crate::model::{
+    Config, Diagnostics, Fingerprint, Protocol, ReadStopReason, ScanMode, ScanOutcome, Status,
+    TcpMeta,
+};
 use crate::probe::{probe_for_target, ProbeRequest};
 use crate::util::now_millis;
 use async_trait::async_trait;
@@ -36,6 +39,7 @@ impl TargetProcessor for DefaultProcessor {
         let client_req = ClientRequest {
             target: target.clone(),
             mode: cfg.mode,
+            protocol: cfg.protocol.clone(),
         };
         if let Some(udp_client) = udp_client_for_target(&client_req) {
             let udp_start = now_millis();
@@ -58,6 +62,7 @@ impl TargetProcessor for DefaultProcessor {
                         }),
                         cfg.max_bytes,
                         cfg.read_timeout,
+                        &cfg.protocol,
                     ))
                 }
             };
@@ -69,7 +74,7 @@ impl TargetProcessor for DefaultProcessor {
             };
             let banner =
                 BannerReader::new(cfg.max_bytes, cfg.read_timeout).render(read_result.clone());
-            let fingerprint = crate::probe::fingerprint(&read_result);
+            let fingerprint = Fingerprint::from_protocol(&cfg.protocol);
             let elapsed = now_millis() - udp_start;
 
             return Ok(ScanOutcome {
@@ -113,6 +118,7 @@ impl TargetProcessor for DefaultProcessor {
                     }),
                     cfg.max_bytes,
                     cfg.read_timeout,
+                    &cfg.protocol,
                 ));
             }
             Err(_) => {
@@ -131,6 +137,7 @@ impl TargetProcessor for DefaultProcessor {
                     }),
                     cfg.max_bytes,
                     cfg.read_timeout,
+                    &cfg.protocol,
                 ));
             }
         };
@@ -140,6 +147,7 @@ impl TargetProcessor for DefaultProcessor {
         let probe_req = ProbeRequest {
             target: target.clone(),
             mode: cfg.mode,
+            protocol: cfg.protocol.clone(),
         };
         let probe = probe_for_target(&probe_req);
 
@@ -160,6 +168,7 @@ impl TargetProcessor for DefaultProcessor {
                         }),
                         cfg.max_bytes,
                         cfg.read_timeout,
+                        &cfg.protocol,
                     ))
                 }
             }
@@ -179,6 +188,7 @@ impl TargetProcessor for DefaultProcessor {
                         }),
                         cfg.max_bytes,
                         cfg.read_timeout,
+                        &cfg.protocol,
                     ))
                 }
             }
@@ -198,12 +208,13 @@ impl TargetProcessor for DefaultProcessor {
                         }),
                         cfg.max_bytes,
                         cfg.read_timeout,
+                        &cfg.protocol,
                     ))
                 }
             }
         };
 
-        let fingerprint = crate::probe::fingerprint(&read_result);
+        let fingerprint = Fingerprint::from_protocol(&cfg.protocol);
         let banner = reader.render(read_result);
         let total = now_millis() - start;
         debug!(target = %target.resolved, ms = total, "processed target");
@@ -233,7 +244,7 @@ fn adjusted_connect_timeout(cfg: &Config, target: &crate::model::Target) -> Dura
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{OutputConfig, OutputFormat, Target, TargetSpec};
+    use crate::model::{OutputConfig, OutputFormat, Protocol, Target, TargetSpec};
 
     fn dummy_cfg(mode: ScanMode, connect_timeout: Duration) -> Config {
         Config {
@@ -247,6 +258,7 @@ mod tests {
             overall_timeout: Duration::from_secs(5),
             max_bytes: 64,
             mode,
+            protocol: Protocol::Http,
             output: OutputConfig {
                 format: OutputFormat::Jsonl,
             },
@@ -293,6 +305,7 @@ fn outcome_with_context(
     diagnostics: Option<Diagnostics>,
     max_bytes: usize,
     idle_timeout: Duration,
+    protocol: &Protocol,
 ) -> ScanOutcome {
     let read_result = super::reader::ReadResult {
         truncated: matches!(reason, ReadStopReason::SizeLimit) || bytes.len() >= max_bytes,
@@ -300,7 +313,7 @@ fn outcome_with_context(
         reason: reason.clone(),
     };
     let banner = BannerReader::new(max_bytes, idle_timeout).render(read_result.clone());
-    let fingerprint = crate::probe::fingerprint(&read_result);
+    let fingerprint = Fingerprint::from_protocol(protocol);
     ScanOutcome {
         target: target.view(),
         status,

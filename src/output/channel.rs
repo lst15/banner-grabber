@@ -1,4 +1,6 @@
-use crate::model::{Diagnostics, Fingerprint, OutputConfig, ScanOutcome, Status, Target, TcpMeta};
+use crate::model::{
+    Diagnostics, Fingerprint, OutputConfig, Protocol, ScanOutcome, Status, Target, TcpMeta,
+};
 use tokio::sync::mpsc;
 
 use super::sink::OutputSink;
@@ -52,7 +54,12 @@ impl OutputChannel {
         Ok(())
     }
 
-    pub async fn emit_error(&self, target: Target, error: String) -> anyhow::Result<()> {
+    pub async fn emit_error(
+        &self,
+        target: Target,
+        protocol: &Protocol,
+        error: String,
+    ) -> anyhow::Result<()> {
         let view = target.view();
         let outcome = ScanOutcome {
             target: view,
@@ -62,11 +69,7 @@ impl OutputChannel {
                 error: Some(error.clone()),
             },
             banner: Default::default(),
-            fingerprint: Fingerprint {
-                protocol: None,
-                score: 0.0,
-                fields: Default::default(),
-            },
+            fingerprint: Fingerprint::from_protocol(protocol),
             diagnostics: Some(Diagnostics {
                 stage: "pipeline".into(),
                 message: error,

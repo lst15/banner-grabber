@@ -161,6 +161,7 @@ mod tests {
             overall_timeout: std::time::Duration::from_millis(200),
             max_bytes: 64,
             mode: crate::model::ScanMode::Passive,
+            protocol: crate::model::Protocol::Http,
             output: crate::model::OutputConfig {
                 format: crate::model::OutputFormat::Jsonl,
             },

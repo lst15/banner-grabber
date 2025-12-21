@@ -6,16 +6,16 @@ Active mode now includes lightweight clients for common protocols (FTP, SMTP, SS
 
 ## Usage
 
-Run with a single host/port:
+Run with a single host/port (protocol is required):
 
 ```bash
-cargo run -- --host 192.0.2.10 --port 80
+cargo run -- --host 192.0.2.10 --port 80 --protocol http
 ```
 
 Run against a list from a file (one target per line):
 
 ```bash
-cargo run -- --input targets.txt
+cargo run -- --input targets.txt --port 443 --protocol https
 ```
 
 You can also provide `--port` alongside `--input` to filter the list, keeping only targets
@@ -27,6 +27,7 @@ Optional flags you may want to tweak:
 - `--rate <N>`: new connections per second (default 64)
 - `--connect-timeout <ms>` / `--read-timeout <ms>` / `--overall-timeout <ms>`
 - `--mode passive|active`: whether to send protocol-specific probes (default active)
+- `--protocol <name>`: protocol to negotiate (required)
 - `--output jsonl|pretty|csv` or `--pretty` for log-style output
 
 ## Input file format
