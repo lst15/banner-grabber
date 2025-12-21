@@ -18,7 +18,7 @@ pub trait TargetProcessor: Send + Sync {
     async fn process_target(
         &self,
         target: crate::model::Target,
-        cfg: std::sync::Arc<Config>,
+        config: std::sync::Arc<Config>,
     ) -> anyhow::Result<ScanOutcome>;
 }
 
@@ -30,39 +30,41 @@ impl TargetProcessor for DefaultProcessor {
     async fn process_target(
         &self,
         target: crate::model::Target,
-        cfg: std::sync::Arc<Config>,
+        config: std::sync::Arc<Config>,
     ) -> anyhow::Result<ScanOutcome> {
         let start = now_millis();
         let tcp_start = now_millis();
-        let connect_timeout = adjusted_connect_timeout(cfg.as_ref(), &target);
+        let connect_timeout = adjusted_connect_timeout(config.as_ref(), &target);
 
-        let client_req = ClientRequest {
+        let client_request = ClientRequest {
             target: target.clone(),
-            mode: cfg.mode,
-            protocol: cfg.protocol.clone(),
+            mode: config.mode,
+            protocol: config.protocol.clone(),
         };
-        if let Some(outcome) = handle_udp_path(target.clone(), cfg.as_ref(), &client_req).await? {
+        if let Some(outcome) =
+            attempt_udp_scan(target.clone(), config.as_ref(), &client_request).await?
+        {
             return Ok(outcome);
         }
 
         let (mut stream, tcp_meta) =
-            match connect_tcp(target.clone(), cfg.as_ref(), connect_timeout, tcp_start).await? {
+            match connect_tcp(target.clone(), config.as_ref(), connect_timeout, tcp_start).await? {
                 Ok(connection) => connection,
                 Err(outcome) => return Ok(outcome),
             };
 
-        let probe_req = ProbeRequest {
+        let probe_request = ProbeRequest {
             target: target.clone(),
-            mode: cfg.mode,
-            protocol: cfg.protocol.clone(),
+            mode: config.mode,
+            protocol: config.protocol.clone(),
         };
 
-        let read_result = match execute_stream_pipeline(
+        let read_result = match process_tcp_stream(
             &mut stream,
             target.clone(),
-            cfg.as_ref(),
-            &client_req,
-            &probe_req,
+            config.as_ref(),
+            &client_request,
+            &probe_request,
             &tcp_meta,
         )
         .await
@@ -71,8 +73,8 @@ impl TargetProcessor for DefaultProcessor {
             Err(outcome) => return Ok(outcome),
         };
 
-        let fingerprint = Fingerprint::from_protocol(&cfg.protocol);
-        let banner = BannerReader::new(cfg.max_bytes, cfg.read_timeout).render(read_result);
+        let fingerprint = Fingerprint::from_protocol(&config.protocol);
+        let banner = BannerReader::new(config.max_bytes, config.read_timeout).render(read_result);
         let total = now_millis() - start;
         debug!(target = %target.resolved, ms = total, "processed target");
 
@@ -87,18 +89,18 @@ impl TargetProcessor for DefaultProcessor {
     }
 }
 
-async fn handle_udp_path(
+async fn attempt_udp_scan(
     target: crate::model::Target,
-    cfg: &Config,
-    client_req: &ClientRequest,
+    config: &Config,
+    client_request: &ClientRequest,
 ) -> anyhow::Result<Option<ScanOutcome>> {
-    if let Some(udp_client) = udp_client_for_target(client_req) {
+    if let Some(udp_client) = udp_client_for_target(client_request) {
         let udp_start = now_millis();
 
-        let read_result = match udp_client.execute(&target, cfg).await {
+        let read_result = match udp_client.execute(&target, config).await {
             Ok(result) => result,
             Err(err) => {
-                return Ok(Some(outcome_with_context(
+                return Ok(Some(build_outcome_with_context(
                     target,
                     Status::Error,
                     TcpMeta {
@@ -111,9 +113,9 @@ async fn handle_udp_path(
                         stage: format!("clients:{}", udp_client.name()),
                         message: err.to_string(),
                     }),
-                    cfg.max_bytes,
-                    cfg.read_timeout,
-                    &cfg.protocol,
+                    config.max_bytes,
+                    config.read_timeout,
+                    &config.protocol,
                 )))
             }
         };
@@ -123,8 +125,9 @@ async fn handle_udp_path(
         } else {
             Status::Open
         };
-        let banner = BannerReader::new(cfg.max_bytes, cfg.read_timeout).render(read_result.clone());
-        let fingerprint = Fingerprint::from_protocol(&cfg.protocol);
+        let banner =
+            BannerReader::new(config.max_bytes, config.read_timeout).render(read_result.clone());
+        let fingerprint = Fingerprint::from_protocol(&config.protocol);
         let elapsed = now_millis() - udp_start;
 
         return Ok(Some(ScanOutcome {
@@ -145,7 +148,7 @@ async fn handle_udp_path(
 
 async fn connect_tcp(
     target: crate::model::Target,
-    cfg: &Config,
+    config: &Config,
     connect_timeout: Duration,
     tcp_start: u128,
 ) -> anyhow::Result<Result<(TcpStream, TcpMeta), ScanOutcome>> {
@@ -162,7 +165,7 @@ async fn connect_tcp(
                 },
             ))
         }
-        Ok(Err(err)) => Err(outcome_with_context(
+        Ok(Err(err)) => Err(build_outcome_with_context(
             target,
             Status::Error,
             TcpMeta {
@@ -175,11 +178,11 @@ async fn connect_tcp(
                 stage: "connect".into(),
                 message: err.to_string(),
             }),
-            cfg.max_bytes,
-            cfg.read_timeout,
-            &cfg.protocol,
+            config.max_bytes,
+            config.read_timeout,
+            &config.protocol,
         )),
-        Err(_) => Err(outcome_with_context(
+        Err(_) => Err(build_outcome_with_context(
             target,
             Status::Timeout,
             TcpMeta {
@@ -192,30 +195,30 @@ async fn connect_tcp(
                 stage: "connect".into(),
                 message: "connect timeout".into(),
             }),
-            cfg.max_bytes,
-            cfg.read_timeout,
-            &cfg.protocol,
+            config.max_bytes,
+            config.read_timeout,
+            &config.protocol,
         )),
     };
 
     Ok(connection)
 }
 
-async fn execute_stream_pipeline(
+async fn process_tcp_stream(
     stream: &mut TcpStream,
     target: crate::model::Target,
-    cfg: &Config,
-    client_req: &ClientRequest,
-    probe_req: &ProbeRequest,
+    config: &Config,
+    client_request: &ClientRequest,
+    probe_request: &ProbeRequest,
     tcp_meta: &TcpMeta,
 ) -> Result<super::reader::ReadResult, ScanOutcome> {
-    let client = client_for_target(client_req);
-    let probe = probe_for_target(probe_req);
+    let client = client_for_target(client_request);
+    let probe = probe_for_target(probe_request);
 
     if let Some(client) = client {
-        match client.execute(stream, cfg).await {
+        match client.execute(stream, config).await {
             Ok(result) => Ok(result),
-            Err(err) => Err(outcome_with_context(
+            Err(err) => Err(build_outcome_with_context(
                 target,
                 Status::Error,
                 tcp_meta.clone(),
@@ -225,15 +228,15 @@ async fn execute_stream_pipeline(
                     stage: format!("clients:{}", client.name()),
                     message: err.to_string(),
                 }),
-                cfg.max_bytes,
-                cfg.read_timeout,
-                &cfg.protocol,
+                config.max_bytes,
+                config.read_timeout,
+                &config.protocol,
             )),
         }
     } else if let Some(probe) = probe {
-        match probe.execute(stream, cfg).await {
+        match probe.execute(stream, config).await {
             Ok(result) => Ok(result),
-            Err(err) => Err(outcome_with_context(
+            Err(err) => Err(build_outcome_with_context(
                 target,
                 Status::Error,
                 tcp_meta.clone(),
@@ -243,16 +246,16 @@ async fn execute_stream_pipeline(
                     stage: "probe".into(),
                     message: err.to_string(),
                 }),
-                cfg.max_bytes,
-                cfg.read_timeout,
-                &cfg.protocol,
+                config.max_bytes,
+                config.read_timeout,
+                &config.protocol,
             )),
         }
     } else {
-        let mut reader = BannerReader::new(cfg.max_bytes, cfg.read_timeout);
+        let mut reader = BannerReader::new(config.max_bytes, config.read_timeout);
         match reader.read(stream, None).await {
             Ok(result) => Ok(result),
-            Err(err) => Err(outcome_with_context(
+            Err(err) => Err(build_outcome_with_context(
                 target,
                 Status::Error,
                 tcp_meta.clone(),
@@ -262,23 +265,23 @@ async fn execute_stream_pipeline(
                     stage: "banner-read".into(),
                     message: err.to_string(),
                 }),
-                cfg.max_bytes,
-                cfg.read_timeout,
-                &cfg.protocol,
+                config.max_bytes,
+                config.read_timeout,
+                &config.protocol,
             )),
         }
     }
 }
 
-fn adjusted_connect_timeout(cfg: &Config, target: &crate::model::Target) -> Duration {
-    if matches!(cfg.mode, ScanMode::Active) && target.resolved.port() == 21 {
+fn adjusted_connect_timeout(config: &Config, target: &crate::model::Target) -> Duration {
+    if matches!(config.mode, ScanMode::Active) && target.resolved.port() == 21 {
         // FTP servers are often slower to finish the TCP handshake due to
         // connection tracking and banner throttling. Give them extra time so
         // we don't misclassify healthy endpoints as timeouts in active mode.
-        return cfg.connect_timeout.saturating_mul(4);
+        return config.connect_timeout.saturating_mul(4);
     }
 
-    cfg.connect_timeout
+    config.connect_timeout
 }
 
 #[cfg(test)]
@@ -286,7 +289,7 @@ mod tests {
     use super::*;
     use crate::model::{OutputConfig, OutputFormat, Protocol, Target, TargetSpec};
 
-    fn dummy_cfg(mode: ScanMode, connect_timeout: Duration) -> Config {
+    fn baseline_config(mode: ScanMode, connect_timeout: Duration) -> Config {
         Config {
             target: None,
             input: None,
@@ -317,26 +320,26 @@ mod tests {
 
     #[test]
     fn extends_timeout_for_active_ftp() {
-        let cfg = dummy_cfg(ScanMode::Active, Duration::from_secs(1));
-        let timeout = adjusted_connect_timeout(&cfg, &ftp_target());
+        let config = baseline_config(ScanMode::Active, Duration::from_secs(1));
+        let timeout = adjusted_connect_timeout(&config, &ftp_target());
         assert_eq!(timeout, Duration::from_secs(4));
     }
 
     #[test]
     fn leaves_timeout_unchanged_for_other_modes_and_ports() {
-        let cfg = dummy_cfg(ScanMode::Passive, Duration::from_secs(1));
-        let timeout = adjusted_connect_timeout(&cfg, &ftp_target());
+        let config = baseline_config(ScanMode::Passive, Duration::from_secs(1));
+        let timeout = adjusted_connect_timeout(&config, &ftp_target());
         assert_eq!(timeout, Duration::from_secs(1));
 
         let mut active_non_ftp = ftp_target();
         active_non_ftp.resolved.set_port(22);
-        let cfg_active = dummy_cfg(ScanMode::Active, Duration::from_secs(1));
-        let timeout_active = adjusted_connect_timeout(&cfg_active, &active_non_ftp);
+        let active_config = baseline_config(ScanMode::Active, Duration::from_secs(1));
+        let timeout_active = adjusted_connect_timeout(&active_config, &active_non_ftp);
         assert_eq!(timeout_active, Duration::from_secs(1));
     }
 }
 
-fn outcome_with_context(
+fn build_outcome_with_context(
     target: crate::model::Target,
     status: Status,
     tcp: TcpMeta,
