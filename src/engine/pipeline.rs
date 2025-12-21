@@ -41,192 +41,232 @@ impl TargetProcessor for DefaultProcessor {
             mode: cfg.mode,
             protocol: cfg.protocol.clone(),
         };
-        if let Some(udp_client) = udp_client_for_target(&client_req) {
-            let udp_start = now_millis();
-
-            let read_result = match udp_client.execute(&target, cfg.as_ref()).await {
-                Ok(result) => result,
-                Err(err) => {
-                    return Ok(outcome_with_context(
-                        target,
-                        Status::Error,
-                        TcpMeta {
-                            connect_ms: Some(now_millis() - udp_start),
-                            error: Some(err.to_string()),
-                        },
-                        ReadStopReason::NotStarted,
-                        Vec::new(),
-                        Some(Diagnostics {
-                            stage: format!("clients:{}", udp_client.name()),
-                            message: err.to_string(),
-                        }),
-                        cfg.max_bytes,
-                        cfg.read_timeout,
-                        &cfg.protocol,
-                    ))
-                }
-            };
-
-            let status = if matches!(read_result.reason, ReadStopReason::Timeout) {
-                Status::Timeout
-            } else {
-                Status::Open
-            };
-            let banner =
-                BannerReader::new(cfg.max_bytes, cfg.read_timeout).render(read_result.clone());
-            let fingerprint = Fingerprint::from_protocol(&cfg.protocol);
-            let elapsed = now_millis() - udp_start;
-
-            return Ok(ScanOutcome {
-                target: target.view(),
-                status,
-                tcp: TcpMeta {
-                    connect_ms: Some(elapsed),
-                    error: None,
-                },
-                banner,
-                fingerprint,
-                diagnostics: None,
-            });
+        if let Some(outcome) = handle_udp_path(target.clone(), cfg.as_ref(), &client_req).await? {
+            return Ok(outcome);
         }
-        let connect_result = timeout(connect_timeout, TcpStream::connect(target.resolved)).await;
 
-        let (mut stream, tcp_meta) = match connect_result {
-            Ok(Ok(stream)) => {
-                let elapsed = now_millis() - tcp_start;
-                (
-                    stream,
-                    TcpMeta {
-                        connect_ms: Some(elapsed),
-                        error: None,
-                    },
-                )
-            }
-            Ok(Err(err)) => {
-                return Ok(outcome_with_context(
-                    target,
-                    Status::Error,
-                    TcpMeta {
-                        connect_ms: None,
-                        error: Some(err.to_string()),
-                    },
-                    ReadStopReason::NotStarted,
-                    Vec::new(),
-                    Some(Diagnostics {
-                        stage: "connect".into(),
-                        message: err.to_string(),
-                    }),
-                    cfg.max_bytes,
-                    cfg.read_timeout,
-                    &cfg.protocol,
-                ));
-            }
-            Err(_) => {
-                return Ok(outcome_with_context(
-                    target,
-                    Status::Timeout,
-                    TcpMeta {
-                        connect_ms: None,
-                        error: Some("connect timeout".into()),
-                    },
-                    ReadStopReason::Timeout,
-                    Vec::new(),
-                    Some(Diagnostics {
-                        stage: "connect".into(),
-                        message: "connect timeout".into(),
-                    }),
-                    cfg.max_bytes,
-                    cfg.read_timeout,
-                    &cfg.protocol,
-                ));
-            }
-        };
-        let status = Status::Open;
+        let (mut stream, tcp_meta) =
+            match connect_tcp(target.clone(), cfg.as_ref(), connect_timeout, tcp_start).await? {
+                Ok(connection) => connection,
+                Err(outcome) => return Ok(outcome),
+            };
 
-        let client = client_for_target(&client_req);
         let probe_req = ProbeRequest {
             target: target.clone(),
             mode: cfg.mode,
             protocol: cfg.protocol.clone(),
         };
-        let probe = probe_for_target(&probe_req);
 
-        let mut reader = BannerReader::new(cfg.max_bytes, cfg.read_timeout);
-        let read_result = if let Some(client) = client {
-            match client.execute(&mut stream, cfg.as_ref()).await {
-                Ok(result) => result,
-                Err(err) => {
-                    return Ok(outcome_with_context(
-                        target,
-                        Status::Error,
-                        tcp_meta,
-                        ReadStopReason::NotStarted,
-                        Vec::new(),
-                        Some(Diagnostics {
-                            stage: format!("clients:{}", client.name()),
-                            message: err.to_string(),
-                        }),
-                        cfg.max_bytes,
-                        cfg.read_timeout,
-                        &cfg.protocol,
-                    ))
-                }
-            }
-        } else if let Some(probe) = probe {
-            match probe.execute(&mut stream, cfg.as_ref()).await {
-                Ok(result) => result,
-                Err(err) => {
-                    return Ok(outcome_with_context(
-                        target,
-                        Status::Error,
-                        tcp_meta,
-                        ReadStopReason::NotStarted,
-                        Vec::new(),
-                        Some(Diagnostics {
-                            stage: "probe".into(),
-                            message: err.to_string(),
-                        }),
-                        cfg.max_bytes,
-                        cfg.read_timeout,
-                        &cfg.protocol,
-                    ))
-                }
-            }
-        } else {
-            match reader.read(&mut stream, None).await {
-                Ok(result) => result,
-                Err(err) => {
-                    return Ok(outcome_with_context(
-                        target,
-                        Status::Error,
-                        tcp_meta,
-                        ReadStopReason::NotStarted,
-                        Vec::new(),
-                        Some(Diagnostics {
-                            stage: "banner-read".into(),
-                            message: err.to_string(),
-                        }),
-                        cfg.max_bytes,
-                        cfg.read_timeout,
-                        &cfg.protocol,
-                    ))
-                }
-            }
+        let read_result = match execute_stream_pipeline(
+            &mut stream,
+            target.clone(),
+            cfg.as_ref(),
+            &client_req,
+            &probe_req,
+            &tcp_meta,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(outcome) => return Ok(outcome),
         };
 
         let fingerprint = Fingerprint::from_protocol(&cfg.protocol);
-        let banner = reader.render(read_result);
+        let banner = BannerReader::new(cfg.max_bytes, cfg.read_timeout).render(read_result);
         let total = now_millis() - start;
         debug!(target = %target.resolved, ms = total, "processed target");
 
         Ok(ScanOutcome {
             target: target.view(),
-            status,
+            status: Status::Open,
             tcp: tcp_meta,
             banner,
             fingerprint,
             diagnostics: None,
         })
+    }
+}
+
+async fn handle_udp_path(
+    target: crate::model::Target,
+    cfg: &Config,
+    client_req: &ClientRequest,
+) -> anyhow::Result<Option<ScanOutcome>> {
+    if let Some(udp_client) = udp_client_for_target(client_req) {
+        let udp_start = now_millis();
+
+        let read_result = match udp_client.execute(&target, cfg).await {
+            Ok(result) => result,
+            Err(err) => {
+                return Ok(Some(outcome_with_context(
+                    target,
+                    Status::Error,
+                    TcpMeta {
+                        connect_ms: Some(now_millis() - udp_start),
+                        error: Some(err.to_string()),
+                    },
+                    ReadStopReason::NotStarted,
+                    Vec::new(),
+                    Some(Diagnostics {
+                        stage: format!("clients:{}", udp_client.name()),
+                        message: err.to_string(),
+                    }),
+                    cfg.max_bytes,
+                    cfg.read_timeout,
+                    &cfg.protocol,
+                )))
+            }
+        };
+
+        let status = if matches!(read_result.reason, ReadStopReason::Timeout) {
+            Status::Timeout
+        } else {
+            Status::Open
+        };
+        let banner = BannerReader::new(cfg.max_bytes, cfg.read_timeout).render(read_result.clone());
+        let fingerprint = Fingerprint::from_protocol(&cfg.protocol);
+        let elapsed = now_millis() - udp_start;
+
+        return Ok(Some(ScanOutcome {
+            target: target.view(),
+            status,
+            tcp: TcpMeta {
+                connect_ms: Some(elapsed),
+                error: None,
+            },
+            banner,
+            fingerprint,
+            diagnostics: None,
+        }));
+    }
+
+    Ok(None)
+}
+
+async fn connect_tcp(
+    target: crate::model::Target,
+    cfg: &Config,
+    connect_timeout: Duration,
+    tcp_start: u128,
+) -> anyhow::Result<Result<(TcpStream, TcpMeta), ScanOutcome>> {
+    let connect_result = timeout(connect_timeout, TcpStream::connect(target.resolved)).await;
+
+    let connection = match connect_result {
+        Ok(Ok(stream)) => {
+            let elapsed = now_millis() - tcp_start;
+            Ok((
+                stream,
+                TcpMeta {
+                    connect_ms: Some(elapsed),
+                    error: None,
+                },
+            ))
+        }
+        Ok(Err(err)) => Err(outcome_with_context(
+            target,
+            Status::Error,
+            TcpMeta {
+                connect_ms: None,
+                error: Some(err.to_string()),
+            },
+            ReadStopReason::NotStarted,
+            Vec::new(),
+            Some(Diagnostics {
+                stage: "connect".into(),
+                message: err.to_string(),
+            }),
+            cfg.max_bytes,
+            cfg.read_timeout,
+            &cfg.protocol,
+        )),
+        Err(_) => Err(outcome_with_context(
+            target,
+            Status::Timeout,
+            TcpMeta {
+                connect_ms: None,
+                error: Some("connect timeout".into()),
+            },
+            ReadStopReason::Timeout,
+            Vec::new(),
+            Some(Diagnostics {
+                stage: "connect".into(),
+                message: "connect timeout".into(),
+            }),
+            cfg.max_bytes,
+            cfg.read_timeout,
+            &cfg.protocol,
+        )),
+    };
+
+    Ok(connection)
+}
+
+async fn execute_stream_pipeline(
+    stream: &mut TcpStream,
+    target: crate::model::Target,
+    cfg: &Config,
+    client_req: &ClientRequest,
+    probe_req: &ProbeRequest,
+    tcp_meta: &TcpMeta,
+) -> Result<super::reader::ReadResult, ScanOutcome> {
+    let client = client_for_target(client_req);
+    let probe = probe_for_target(probe_req);
+
+    if let Some(client) = client {
+        match client.execute(stream, cfg).await {
+            Ok(result) => Ok(result),
+            Err(err) => Err(outcome_with_context(
+                target,
+                Status::Error,
+                tcp_meta.clone(),
+                ReadStopReason::NotStarted,
+                Vec::new(),
+                Some(Diagnostics {
+                    stage: format!("clients:{}", client.name()),
+                    message: err.to_string(),
+                }),
+                cfg.max_bytes,
+                cfg.read_timeout,
+                &cfg.protocol,
+            )),
+        }
+    } else if let Some(probe) = probe {
+        match probe.execute(stream, cfg).await {
+            Ok(result) => Ok(result),
+            Err(err) => Err(outcome_with_context(
+                target,
+                Status::Error,
+                tcp_meta.clone(),
+                ReadStopReason::NotStarted,
+                Vec::new(),
+                Some(Diagnostics {
+                    stage: "probe".into(),
+                    message: err.to_string(),
+                }),
+                cfg.max_bytes,
+                cfg.read_timeout,
+                &cfg.protocol,
+            )),
+        }
+    } else {
+        let mut reader = BannerReader::new(cfg.max_bytes, cfg.read_timeout);
+        match reader.read(stream, None).await {
+            Ok(result) => Ok(result),
+            Err(err) => Err(outcome_with_context(
+                target,
+                Status::Error,
+                tcp_meta.clone(),
+                ReadStopReason::NotStarted,
+                Vec::new(),
+                Some(Diagnostics {
+                    stage: "banner-read".into(),
+                    message: err.to_string(),
+                }),
+                cfg.max_bytes,
+                cfg.read_timeout,
+                &cfg.protocol,
+            )),
+        }
     }
 }
 
