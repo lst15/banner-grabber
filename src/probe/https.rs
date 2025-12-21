@@ -105,20 +105,36 @@ impl Prober for HttpsProbe {
 }
 
 fn parse_content_length(bytes: &[u8]) -> Option<usize> {
-    let header_end = bytes.windows(4).position(|w| w == b"\r\n\r\n")?;
-    let headers = &bytes[..header_end];
-    for line in headers.split(|b| *b == b'\n') {
-        if let Some(rest) = line
-            .strip_prefix(b"Content-Length:")
-            .or_else(|| line.strip_prefix(b"content-length:"))
+    for line in bytes.split(|b| *b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() {
+            break;
+        }
+
+        if line
+            .get(..15)
+            .map(|prefix| prefix.eq_ignore_ascii_case(b"Content-Length:"))
+            .unwrap_or(false)
         {
-            let value = std::str::from_utf8(rest).ok()?.trim();
+            let value = std::str::from_utf8(&line[15..]).ok()?.trim();
             if let Ok(len) = value.parse::<usize>() {
                 return Some(len);
             }
         }
     }
+
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_content_length;
+
+    #[test]
+    fn parses_length_without_delimiter() {
+        let headers = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 12\r\n";
+        assert_eq!(parse_content_length(headers), Some(12));
+    }
 }
 
 fn https_connector() -> anyhow::Result<&'static tokio_native_tls::TlsConnector> {
