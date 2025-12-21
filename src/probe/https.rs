@@ -58,15 +58,21 @@ impl Prober for HttpsProbe {
         let mut result = reader.read(&mut tls_stream, None).await?;
 
         if let Some(content_length) = parse_content_length(&result.bytes) {
+            let header_end = find_header_end(&result.bytes).unwrap_or(result.bytes.len());
+            let already_have_body = result.bytes.len().saturating_sub(header_end);
             // Respect the remaining budget when attempting to pull the body.
             let available = cfg.max_bytes.saturating_sub(result.bytes.len());
-            if available == 0 {
-                result.truncated = true;
-                result.reason = crate::model::ReadStopReason::SizeLimit;
+            let missing = content_length.saturating_sub(already_have_body);
+
+            if available == 0 || missing == 0 {
+                if missing > 0 {
+                    result.truncated = true;
+                    result.reason = crate::model::ReadStopReason::SizeLimit;
+                }
                 return Ok(result);
             }
 
-            let expected = content_length.min(available);
+            let expected = missing.min(available);
             let mut buf = vec![0u8; expected];
             let mut read = 0usize;
 
@@ -89,7 +95,7 @@ impl Prober for HttpsProbe {
                 }
             }
 
-            if content_length > available {
+            if content_length > already_have_body + available {
                 result.truncated = true;
                 result.reason = crate::model::ReadStopReason::SizeLimit;
             } else if read == expected {
@@ -126,14 +132,27 @@ fn parse_content_length(bytes: &[u8]) -> Option<usize> {
     None
 }
 
+fn find_header_end(bytes: &[u8]) -> Option<usize> {
+    bytes
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|pos| pos + 4)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_content_length;
+    use super::{find_header_end, parse_content_length};
 
     #[test]
     fn parses_length_without_delimiter() {
         let headers = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 12\r\n";
         assert_eq!(parse_content_length(headers), Some(12));
+    }
+
+    #[test]
+    fn finds_header_end_with_body() {
+        let resp = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nBody";
+        assert_eq!(find_header_end(resp), Some(38));
     }
 }
 

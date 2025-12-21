@@ -33,8 +33,7 @@ impl BannerReader {
                         reason = ReadStopReason::SizeLimit;
                         break;
                     }
-                    if let Some(pos) = find_delimiter(&buf[..total], extra_delimiter) {
-                        total = pos;
+                    if find_delimiter(&buf[..total], extra_delimiter).is_some() {
                         reason = ReadStopReason::Delimiter;
                         break;
                     }
@@ -98,7 +97,17 @@ mod tests {
         let mut reader = BannerReader::new(64, Duration::from_millis(200));
         let mut data: &[u8] = b"HTTP/1.1 200 OK\r\n\r\nBody";
         let res = reader.read(&mut data, None).await.unwrap();
-        assert!(res.bytes.ends_with(b"\r\n\r\n"));
+        assert!(res.bytes.starts_with(b"HTTP/1.1 200 OK\r\n\r\n"));
+        assert_eq!(res.reason, ReadStopReason::Delimiter);
+    }
+
+    #[tokio::test]
+    async fn retains_bytes_read_after_delimiter() {
+        let mut reader = BannerReader::new(64, Duration::from_millis(200));
+        let mut data: &[u8] = b"HTTP/1.1 200 OK\r\n\r\nBody";
+        let res = reader.read(&mut data, None).await.unwrap();
+        assert_eq!(res.bytes, b"HTTP/1.1 200 OK\r\n\r\nBody");
+        assert_eq!(res.reason, ReadStopReason::Delimiter);
     }
 
     #[tokio::test]
