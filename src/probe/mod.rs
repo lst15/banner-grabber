@@ -1,4 +1,5 @@
 mod http;
+mod https;
 mod redis;
 mod registry;
 mod tls;
