@@ -110,7 +110,7 @@ impl Prober for HttpsProbe {
     }
 }
 
-fn parse_content_length(bytes: &[u8]) -> Option<usize> {
+pub(super) fn parse_content_length(bytes: &[u8]) -> Option<usize> {
     for line in bytes.split(|b| *b == b'\n') {
         let line = line.strip_suffix(b"\r").unwrap_or(line);
         if line.is_empty() {
@@ -132,7 +132,7 @@ fn parse_content_length(bytes: &[u8]) -> Option<usize> {
     None
 }
 
-fn find_header_end(bytes: &[u8]) -> Option<usize> {
+pub(super) fn find_header_end(bytes: &[u8]) -> Option<usize> {
     bytes
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
