@@ -1,4 +1,4 @@
-use crate::model::{Protocol, ScanMode, Target};
+use crate::model::{ProcessingRequest, Protocol, ScanMode};
 
 use super::ftp::FtpClient;
 use super::imap::ImapClient;
@@ -18,13 +18,6 @@ use super::vnc::VncClient;
 use crate::clients::NtpClient;
 use crate::clients::{Client, UdpClient};
 
-pub struct ClientRequest {
-    #[allow(dead_code)]
-    pub target: Target,
-    pub mode: ScanMode,
-    pub protocol: Protocol,
-}
-
 static NTP_CLIENT: NtpClient = NtpClient;
 
 static FTP_CLIENT: FtpClient = FtpClient;
@@ -43,7 +36,7 @@ static SSH_CLIENT: SshClient = SshClient;
 static TELNET_CLIENT: TelnetClient = TelnetClient;
 static VNC_CLIENT: VncClient = VncClient;
 
-pub fn client_for_target(req: &ClientRequest) -> Option<&'static dyn Client> {
+pub fn client_for_target(req: &ProcessingRequest) -> Option<&'static dyn Client> {
     if !matches!(req.mode, ScanMode::Active) {
         return None;
     }
@@ -68,7 +61,7 @@ pub fn client_for_target(req: &ClientRequest) -> Option<&'static dyn Client> {
     }
 }
 
-pub fn udp_client_for_target(req: &ClientRequest) -> Option<&'static dyn UdpClient> {
+pub fn udp_client_for_target(req: &ProcessingRequest) -> Option<&'static dyn UdpClient> {
     if !matches!(req.mode, ScanMode::Active) {
         return None;
     }

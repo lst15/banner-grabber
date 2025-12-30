@@ -1,5 +1,5 @@
 use crate::engine::reader::{BannerReader, ReadResult};
-use crate::model::{Config, Protocol, ScanMode, Target};
+use crate::model::{Config, ProcessingRequest, Protocol, ScanMode, Target};
 use anyhow::Context;
 use async_trait::async_trait;
 use tokio::io::AsyncWriteExt;
@@ -39,19 +39,12 @@ pub trait Prober: Send + Sync {
     }
 }
 
-pub struct ProbeRequest {
-    #[allow(dead_code)]
-    pub target: Target,
-    pub mode: ScanMode,
-    pub protocol: Protocol,
-}
-
 static HTTP_PROBE: HttpProbe = HttpProbe;
 static HTTPS_PROBE: HttpsProbe = HttpsProbe;
 static REDIS_PROBE: RedisProbe = RedisProbe;
 static TLS_PROBE: TlsProbe = TlsProbe;
 
-pub fn probe_for_target(req: &ProbeRequest) -> Option<&'static dyn Prober> {
+pub fn probe_for_target(req: &ProcessingRequest) -> Option<&'static dyn Prober> {
     if matches!(req.mode, ScanMode::Passive) {
         return None;
     }

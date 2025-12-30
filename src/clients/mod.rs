@@ -8,7 +8,7 @@ mod stateful;
 pub use binaries::ntp::NtpClient;
 pub use binaries::{mongodb, mssql, mysql, postgres};
 pub use line_based::{ftp, imap, memcached, mqtt, pop3, redis, smtp, telnet};
-pub use registry::{client_for_target, udp_client_for_target, ClientRequest};
+pub use registry::{client_for_target, udp_client_for_target};
 pub use stateful::{smb, ssh, vnc};
 
 use crate::engine::reader::ReadResult;
