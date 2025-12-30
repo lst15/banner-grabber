@@ -7,11 +7,14 @@ use crate::probe::probe_for_target;
 use crate::util::now_millis;
 use crate::webdriver;
 use async_trait::async_trait;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpStream;
+use tokio::sync::Semaphore;
 use tokio::time::timeout;
 use tracing::debug;
 
+use super::rate::RateLimiter;
 use super::reader::BannerReader;
 
 #[async_trait]
@@ -23,8 +26,33 @@ pub trait TargetProcessor: Send + Sync {
     ) -> anyhow::Result<ScanOutcome>;
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct DefaultProcessor;
+#[derive(Clone, Debug)]
+pub struct DefaultProcessor {
+    webdriver_pool: Option<Arc<WebdriverPool>>,
+}
+
+impl Default for DefaultProcessor {
+    fn default() -> Self {
+        Self {
+            webdriver_pool: None,
+        }
+    }
+}
+
+impl DefaultProcessor {
+    pub fn new(config: &Config) -> Self {
+        let webdriver_pool = if config.webdriver {
+            Some(Arc::new(WebdriverPool::new(
+                config.webdriver_rate,
+                config.webdriver_concurrency,
+                config.webdriver_timeout,
+            )))
+        } else {
+            None
+        };
+        Self { webdriver_pool }
+    }
+}
 
 #[async_trait]
 impl TargetProcessor for DefaultProcessor {
@@ -56,31 +84,28 @@ impl TargetProcessor for DefaultProcessor {
                 Err(outcome) => return Ok(outcome),
             };
 
-        let read_result = match process_tcp_stream(
-            stream,
-            target.clone(),
-            config.as_ref(),
-            &request,
-            &tcp_meta,
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(outcome) => return Ok(outcome),
-        };
-
-        let (webdriver_body, diagnostics) = if config.webdriver {
-            match webdriver::fetch_rendered_body(&target, &config.protocol, config.overall_timeout)
+        let read_result =
+            match process_tcp_stream(stream, target.clone(), config.as_ref(), &request, &tcp_meta)
                 .await
             {
-                Ok(body) => (Some(body), None),
-                Err(err) => (
-                    None,
-                    Some(Diagnostics {
-                        stage: "webdriver".into(),
-                        message: err.to_string(),
-                    }),
-                ),
+                Ok(result) => result,
+                Err(outcome) => return Ok(outcome),
+            };
+
+        let (webdriver_body, diagnostics) = if config.webdriver {
+            if let Some(pool) = &self.webdriver_pool {
+                match pool.fetch(&target, &config.protocol).await {
+                    Ok(body) => (Some(body), None),
+                    Err(err) => (
+                        None,
+                        Some(Diagnostics {
+                            stage: "webdriver".into(),
+                            message: err.to_string(),
+                        }),
+                    ),
+                }
+            } else {
+                (None, None)
             }
         } else {
             (None, None)
@@ -337,5 +362,32 @@ fn build_outcome_from_read_result(
         webdriver,
         fingerprint,
         diagnostics,
+    }
+}
+
+#[derive(Debug)]
+struct WebdriverPool {
+    limiter: RateLimiter,
+    semaphore: Arc<Semaphore>,
+    timeout: Duration,
+}
+
+impl WebdriverPool {
+    fn new(rate: u32, concurrency: usize, timeout: Duration) -> Self {
+        Self {
+            limiter: RateLimiter::new(rate),
+            semaphore: Arc::new(Semaphore::new(concurrency)),
+            timeout,
+        }
+    }
+
+    async fn fetch(
+        &self,
+        target: &crate::model::Target,
+        protocol: &Protocol,
+    ) -> anyhow::Result<String> {
+        self.limiter.acquire().await;
+        let _permit = self.semaphore.clone().acquire_owned().await?;
+        webdriver::fetch_rendered_body(target, protocol, self.timeout).await
     }
 }

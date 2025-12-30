@@ -22,7 +22,8 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(cfg: Config, sink: OutputChannel) -> anyhow::Result<Self> {
-        Self::with_processor(cfg, sink, std::sync::Arc::new(DefaultProcessor))
+        let processor = std::sync::Arc::new(DefaultProcessor::new(&cfg));
+        Self::with_processor(cfg, sink, processor)
     }
 
     pub fn with_processor(
