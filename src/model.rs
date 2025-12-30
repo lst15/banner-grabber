@@ -34,6 +34,13 @@ pub struct Config {
     pub output: OutputConfig,
 }
 
+#[derive(Debug, Clone)]
+pub struct ProcessingRequest {
+    pub target: Target,
+    pub mode: ScanMode,
+    pub protocol: Protocol,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
 pub enum ScanMode {
     Passive,

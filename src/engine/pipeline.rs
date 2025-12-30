@@ -1,8 +1,9 @@
-use crate::clients::{client_for_target, udp_client_for_target, ClientRequest};
+use crate::clients::{client_for_target, udp_client_for_target};
 use crate::model::{
-    Config, Diagnostics, Fingerprint, Protocol, ReadStopReason, ScanOutcome, Status, TcpMeta,
+    Config, Diagnostics, Fingerprint, ProcessingRequest, Protocol, ReadStopReason, ScanOutcome,
+    Status, TcpMeta,
 };
-use crate::probe::{probe_for_target, ProbeRequest};
+use crate::probe::probe_for_target;
 use crate::util::now_millis;
 use crate::webdriver;
 use async_trait::async_trait;
@@ -40,14 +41,12 @@ impl TargetProcessor for DefaultProcessor {
             target.resolved.port(),
         );
 
-        let client_request = ClientRequest {
+        let request = ProcessingRequest {
             target: target.clone(),
             mode: config.mode,
             protocol: config.protocol.clone(),
         };
-        if let Some(outcome) =
-            attempt_udp_scan(target.clone(), config.as_ref(), &client_request).await?
-        {
+        if let Some(outcome) = attempt_udp_scan(target.clone(), config.as_ref(), &request).await? {
             return Ok(outcome);
         }
 
@@ -57,18 +56,11 @@ impl TargetProcessor for DefaultProcessor {
                 Err(outcome) => return Ok(outcome),
             };
 
-        let probe_request = ProbeRequest {
-            target: target.clone(),
-            mode: config.mode,
-            protocol: config.protocol.clone(),
-        };
-
         let read_result = match process_tcp_stream(
             stream,
             target.clone(),
             config.as_ref(),
-            &client_request,
-            &probe_request,
+            &request,
             &tcp_meta,
         )
         .await
@@ -113,9 +105,9 @@ impl TargetProcessor for DefaultProcessor {
 async fn attempt_udp_scan(
     target: crate::model::Target,
     config: &Config,
-    client_request: &ClientRequest,
+    request: &ProcessingRequest,
 ) -> anyhow::Result<Option<ScanOutcome>> {
-    if let Some(udp_client) = udp_client_for_target(client_request) {
+    if let Some(udp_client) = udp_client_for_target(request) {
         let udp_start = now_millis();
 
         let read_result = match udp_client.execute(&target, config).await {
@@ -230,12 +222,11 @@ async fn process_tcp_stream(
     stream: TcpStream,
     target: crate::model::Target,
     config: &Config,
-    client_request: &ClientRequest,
-    probe_request: &ProbeRequest,
+    request: &ProcessingRequest,
     tcp_meta: &TcpMeta,
 ) -> Result<super::reader::ReadResult, ScanOutcome> {
-    let client = client_for_target(client_request);
-    let probe = probe_for_target(probe_request);
+    let client = client_for_target(request);
+    let probe = probe_for_target(request);
 
     if let Some(client) = client {
         let mut stream = stream;
