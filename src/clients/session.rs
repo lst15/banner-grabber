@@ -108,6 +108,7 @@ mod tests {
             max_bytes: 5,
             mode: crate::model::ScanMode::Active,
             protocol: crate::model::Protocol::Http,
+            webdriver: false,
             output: crate::model::OutputConfig {
                 format: crate::model::OutputFormat::Jsonl,
             },

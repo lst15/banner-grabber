@@ -18,6 +18,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 async-trait = "0.1"
 dns-lookup = "2"
 native-tls = "0.2"
+headless_chrome = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

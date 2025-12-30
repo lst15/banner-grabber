@@ -57,6 +57,10 @@ pub struct Cli {
     /// Protocol to probe (e.g. http, https, ftp)
     #[arg(long = "protocol", value_enum)]
     pub protocol: Protocol,
+
+    /// Use a headless browser to collect banners (requires http or https protocol)
+    #[arg(long = "webdriver", action = ArgAction::SetTrue)]
+    pub webdriver: bool,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -90,6 +94,7 @@ impl Cli {
             output,
             pretty,
             protocol,
+            webdriver,
         } = self;
 
         if host.is_none() && input.is_none() {
@@ -110,6 +115,10 @@ impl Cli {
 
         if input.is_some() && port.is_none() {
             anyhow::bail!("--port is required when using --input");
+        }
+
+        if webdriver && !matches!(protocol, Protocol::Http | Protocol::Https) {
+            anyhow::bail!("--webdriver must be used with --protocol http or https");
         }
 
         let target = match (host.clone(), port, input.is_some()) {
@@ -156,6 +165,7 @@ impl Cli {
                 Mode::Active => crate::model::ScanMode::Active,
             },
             protocol,
+            webdriver,
             output: crate::model::OutputConfig {
                 format: if pretty { OutputFormat::Pretty } else { output },
             },
@@ -183,6 +193,7 @@ mod tests {
             output: OutputFormat::Jsonl,
             pretty: false,
             protocol: Protocol::Ftp,
+            webdriver: false,
         };
 
         let cfg = cli.into_config().expect("config should build");
@@ -205,6 +216,7 @@ mod tests {
             output: OutputFormat::Jsonl,
             pretty: false,
             protocol: Protocol::Https,
+            webdriver: false,
         };
 
         let cfg = cli.into_config().expect("config should build");

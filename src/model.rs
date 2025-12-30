@@ -30,6 +30,7 @@ pub struct Config {
     pub max_bytes: usize,
     pub mode: ScanMode,
     pub protocol: Protocol,
+    pub webdriver: bool,
     pub output: OutputConfig,
 }
 

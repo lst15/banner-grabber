@@ -6,6 +6,7 @@ use crate::model::{
 use crate::probe::{probe_for_target, ProbeRequest};
 use crate::util::now_millis;
 use async_trait::async_trait;
+use headless_chrome::Browser;
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
@@ -33,6 +34,16 @@ impl TargetProcessor for DefaultProcessor {
         config: std::sync::Arc<Config>,
     ) -> anyhow::Result<ScanOutcome> {
         let start = now_millis();
+
+        if config.webdriver && matches!(config.protocol, Protocol::Http | Protocol::Https) {
+            return Ok(process_webdriver_target(
+                target,
+                config.as_ref(),
+                start,
+            )
+            .await);
+        }
+
         let tcp_start = now_millis();
         let connect_timeout = adjusted_connect_timeout(config.as_ref(), &target);
 
@@ -286,6 +297,135 @@ fn adjusted_connect_timeout(config: &Config, target: &crate::model::Target) -> D
     config.connect_timeout
 }
 
+async fn process_webdriver_target(
+    target: crate::model::Target,
+    config: &Config,
+    start: u128,
+) -> ScanOutcome {
+    let url = webdriver_url(&target, &config.protocol);
+    let elapsed_start = now_millis();
+    let result = fetch_with_webdriver(url, config.max_bytes, config.overall_timeout).await;
+    let elapsed = now_millis().saturating_sub(elapsed_start);
+    match result {
+        Ok(read_result) => {
+            let banner = BannerReader::new(config.max_bytes, config.read_timeout).render(read_result);
+            let fingerprint = Fingerprint::from_protocol(&config.protocol);
+            let total = now_millis() - start;
+            debug!(target = %target.resolved, ms = total, "processed target");
+            ScanOutcome {
+                target: target.view(),
+                status: Status::Open,
+                tcp: TcpMeta {
+                    connect_ms: Some(elapsed),
+                    error: None,
+                },
+                banner,
+                fingerprint,
+                diagnostics: None,
+            }
+        }
+        Err(failure) => build_outcome_with_context(
+            target,
+            failure.status,
+            TcpMeta {
+                connect_ms: Some(elapsed),
+                error: Some(failure.message.clone()),
+            },
+            failure.reason,
+            Vec::new(),
+            Some(Diagnostics {
+                stage: "webdriver".into(),
+                message: failure.message,
+            }),
+            config.max_bytes,
+            config.read_timeout,
+            &config.protocol,
+        ),
+    }
+}
+
+fn webdriver_url(target: &crate::model::Target, protocol: &Protocol) -> String {
+    let host = if target.original.host.is_empty() {
+        target.resolved.ip().to_string()
+    } else {
+        target.original.host.clone()
+    };
+    let scheme = match protocol {
+        Protocol::Http => "http",
+        Protocol::Https => "https",
+        _ => "http",
+    };
+    format!("{scheme}://{host}:{}/", target.resolved.port())
+}
+
+struct WebdriverFailure {
+    status: Status,
+    reason: ReadStopReason,
+    message: String,
+}
+
+async fn fetch_with_webdriver(
+    url: String,
+    max_bytes: usize,
+    timeout_duration: Duration,
+) -> Result<super::reader::ReadResult, WebdriverFailure> {
+    let handle = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+        let browser = Browser::default()?;
+        let tab = browser.new_tab()?;
+        tab.navigate_to(&url)?;
+        tab.wait_until_navigated()?;
+        let content = tab.get_content()?;
+        Ok(content.into_bytes())
+    });
+
+    let joined = match timeout(timeout_duration, handle).await {
+        Ok(joined) => joined,
+        Err(_) => {
+            return Err(WebdriverFailure {
+                status: Status::Timeout,
+                reason: ReadStopReason::Timeout,
+                message: "webdriver timeout".into(),
+            })
+        }
+    };
+
+    let bytes = match joined {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(err)) => {
+            return Err(WebdriverFailure {
+                status: Status::Error,
+                reason: ReadStopReason::NotStarted,
+                message: err.to_string(),
+            })
+        }
+        Err(err) => {
+            return Err(WebdriverFailure {
+                status: Status::Error,
+                reason: ReadStopReason::NotStarted,
+                message: err.to_string(),
+            })
+        }
+    };
+
+    let truncated = bytes.len() > max_bytes;
+    let bytes = if truncated {
+        bytes[..max_bytes].to_vec()
+    } else {
+        bytes
+    };
+    let reason = if truncated {
+        ReadStopReason::SizeLimit
+    } else {
+        ReadStopReason::ConnectionClosed
+    };
+
+    Ok(super::reader::ReadResult {
+        bytes,
+        reason,
+        truncated,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,6 +444,7 @@ mod tests {
             max_bytes: 64,
             mode,
             protocol: Protocol::Http,
+            webdriver: false,
             output: OutputConfig {
                 format: OutputFormat::Jsonl,
             },
