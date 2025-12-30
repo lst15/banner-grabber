@@ -69,8 +69,6 @@ impl TargetProcessor for DefaultProcessor {
             Err(outcome) => return Ok(outcome),
         };
 
-        let fingerprint = Fingerprint::from_protocol(&config.protocol);
-        let banner = BannerReader::new(config.max_bytes, config.read_timeout).render(read_result);
         let (webdriver_body, diagnostics) = if config.webdriver {
             match webdriver::fetch_rendered_body(&target, &config.protocol, config.overall_timeout)
                 .await
@@ -90,15 +88,17 @@ impl TargetProcessor for DefaultProcessor {
         let total = now_millis() - start;
         debug!(target = %target.resolved, ms = total, "processed target");
 
-        Ok(ScanOutcome {
-            target: target.view(),
-            status: Status::Open,
-            tcp: tcp_meta,
-            banner,
-            webdriver: webdriver_body,
-            fingerprint,
+        Ok(build_outcome_from_read_result(
+            target,
+            Status::Open,
+            tcp_meta,
+            read_result,
             diagnostics,
-        })
+            config.max_bytes,
+            config.read_timeout,
+            &config.protocol,
+            webdriver_body,
+        ))
     }
 }
 
@@ -138,23 +138,22 @@ async fn attempt_udp_scan(
         } else {
             Status::Open
         };
-        let banner =
-            BannerReader::new(config.max_bytes, config.read_timeout).render(read_result.clone());
-        let fingerprint = Fingerprint::from_protocol(&config.protocol);
         let elapsed = now_millis() - udp_start;
 
-        return Ok(Some(ScanOutcome {
-            target: target.view(),
+        return Ok(Some(build_outcome_from_read_result(
+            target,
             status,
-            tcp: TcpMeta {
+            TcpMeta {
                 connect_ms: Some(elapsed),
                 error: None,
             },
-            banner,
-            webdriver: None,
-            fingerprint,
-            diagnostics: None,
-        }));
+            read_result,
+            None,
+            config.max_bytes,
+            config.read_timeout,
+            &config.protocol,
+            None,
+        )));
     }
 
     Ok(None)
@@ -304,14 +303,38 @@ fn build_outcome_with_context(
         bytes,
         reason: reason.clone(),
     };
-    let banner = BannerReader::new(max_bytes, idle_timeout).render(read_result.clone());
+    build_outcome_from_read_result(
+        target,
+        status,
+        tcp,
+        read_result,
+        diagnostics,
+        max_bytes,
+        idle_timeout,
+        protocol,
+        None,
+    )
+}
+
+fn build_outcome_from_read_result(
+    target: crate::model::Target,
+    status: Status,
+    tcp: TcpMeta,
+    read_result: super::reader::ReadResult,
+    diagnostics: Option<Diagnostics>,
+    max_bytes: usize,
+    idle_timeout: Duration,
+    protocol: &Protocol,
+    webdriver: Option<String>,
+) -> ScanOutcome {
+    let banner = BannerReader::new(max_bytes, idle_timeout).render(read_result);
     let fingerprint = Fingerprint::from_protocol(protocol);
     ScanOutcome {
         target: target.view(),
         status,
         tcp,
         banner,
-        webdriver: None,
+        webdriver,
         fingerprint,
         diagnostics,
     }
