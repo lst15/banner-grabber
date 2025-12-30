@@ -1,37 +1,45 @@
 %%{init: {'theme': 'default'}}%%
-graph TD
-    subgraph "Pipeline de Varredura"
-        A[Scan Worker Pool] -->|Usa| B[Protocol Dispatcher]
+flowchart TD
+    subgraph CLI[CLI & Configuração]
+        CLIParse[cli::Cli (clap)] --> Config[model::Config]
     end
 
-    subgraph "Protocolos (Pluggable)"
-        B -->|Dispatch| C[Probe Registry]
-        B -->|Dispatch| D[Client Registry]
-
-        C --> E[(HTTP Probe)]
-        C --> F[(Redis Probe)]
-        C --> G[(TLS Fingerprinter)]
-        C --> H[(Custom Probe)]
-
-        D --> I[(FTP Client)]
-        D --> J[(SMTP Client)]
-        D --> K[(SSH Client)]
-        D --> L[(MySQL Client)]
-        D --> M[(Custom Client)]
+    subgraph Input[Entrada & Resolução]
+        Config --> TargetSpec[input::stream_targets]
+        TargetSpec --> Resolve[DNS lookup_host]
+        Resolve --> Targets[model::Target]
     end
 
-    subgraph "I/O & Saída"
-        A -->|Envia| N[Output Channel]
-        N --> O[Output Sink]
-        O --> P[(JSONL)]
-        O --> Q[(Pretty)]
-        O --> R[(Remote Queue / API)]
+    subgraph Engine[Engine & Orquestração]
+        Targets --> RateLimiter[engine::rate::RateLimiter]
+        RateLimiter --> WorkerPool[engine::Engine worker pool]
+        WorkerPool --> Processor[engine::pipeline::DefaultProcessor]
+    end
+
+    subgraph Pipeline[Pipeline de Processamento]
+        Processor --> UDPStep[UDP scan (clientes UDP)]
+        Processor --> TCPConnect[TCP connect + timeouts]
+        TCPConnect --> BannerReader[engine::reader::BannerReader]
+        BannerReader --> ProbeDispatch[probe::registry]
+        BannerReader --> ClientDispatch[clients::registry]
+        ProbeDispatch --> Probes[(HTTP/HTTPS/Redis/TLS probes)]
+        ClientDispatch --> Clients[(FTP/SMTP/SSH/MySQL clients)]
+        Processor --> Webdriver[webdriver pool (opcional)]
+    end
+
+    subgraph Output[Saída]
+        Processor --> Outcome[model::ScanOutcome]
+        Outcome --> Channel[output::OutputChannel]
+        Channel --> Sink[output::sink]
+        Sink --> JSONL[(JSONL)]
+        Sink --> Pretty[(Pretty)]
+        Sink --> CSV[(CSV)]
     end
 
     classDef core fill:#e6f3ff,stroke:#333;
-    classDef proto fill:#f0f9eb,stroke:#333;
     classDef io fill:#fdeff2,stroke:#333;
+    classDef proto fill:#f0f9eb,stroke:#333;
 
-    class A,B,N,O core
-    class C,D,E,F,G,H,I,J,K,L,M proto
-    class P,Q,R io
+    class CLIParse,Config,TargetSpec,Resolve,Targets,RateLimiter,WorkerPool,Processor core
+    class BannerReader,ProbeDispatch,ClientDispatch,Probes,Clients,Webdriver proto
+    class Channel,Sink,JSONL,Pretty,CSV io
