@@ -6,3 +6,4 @@ pub mod model;
 pub mod output;
 pub mod probe;
 pub mod util;
+pub mod webdriver;

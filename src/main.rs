@@ -6,6 +6,7 @@ mod model;
 mod output;
 mod probe;
 mod util;
+mod webdriver;
 
 use clap::Parser;
 use cli::Cli;

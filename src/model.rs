@@ -30,6 +30,7 @@ pub struct Config {
     pub max_bytes: usize,
     pub mode: ScanMode,
     pub protocol: Protocol,
+    pub webdriver: bool,
     pub output: OutputConfig,
 }
 
@@ -116,6 +117,8 @@ pub struct ScanOutcome {
     pub status: Status,
     pub tcp: TcpMeta,
     pub banner: Banner,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webdriver: Option<String>,
     pub fingerprint: Fingerprint,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagnostics: Option<Diagnostics>,

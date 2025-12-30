@@ -3,6 +3,7 @@ use crate::model::{
     Config, Diagnostics, Fingerprint, Protocol, ReadStopReason, ScanMode, ScanOutcome, Status,
     TcpMeta,
 };
+use crate::webdriver;
 use crate::probe::{probe_for_target, ProbeRequest};
 use crate::util::now_millis;
 use async_trait::async_trait;
@@ -75,6 +76,26 @@ impl TargetProcessor for DefaultProcessor {
 
         let fingerprint = Fingerprint::from_protocol(&config.protocol);
         let banner = BannerReader::new(config.max_bytes, config.read_timeout).render(read_result);
+        let (webdriver_body, diagnostics) = if config.webdriver {
+            match webdriver::fetch_rendered_body(
+                &target,
+                &config.protocol,
+                config.overall_timeout,
+            )
+            .await
+            {
+                Ok(body) => (Some(body), None),
+                Err(err) => (
+                    None,
+                    Some(Diagnostics {
+                        stage: "webdriver".into(),
+                        message: err.to_string(),
+                    }),
+                ),
+            }
+        } else {
+            (None, None)
+        };
         let total = now_millis() - start;
         debug!(target = %target.resolved, ms = total, "processed target");
 
@@ -83,8 +104,9 @@ impl TargetProcessor for DefaultProcessor {
             status: Status::Open,
             tcp: tcp_meta,
             banner,
+            webdriver: webdriver_body,
             fingerprint,
-            diagnostics: None,
+            diagnostics,
         })
     }
 }
@@ -138,6 +160,7 @@ async fn attempt_udp_scan(
                 error: None,
             },
             banner,
+            webdriver: None,
             fingerprint,
             diagnostics: None,
         }));
@@ -304,6 +327,7 @@ mod tests {
             max_bytes: 64,
             mode,
             protocol: Protocol::Http,
+            webdriver: false,
             output: OutputConfig {
                 format: OutputFormat::Jsonl,
             },
@@ -364,6 +388,7 @@ fn build_outcome_with_context(
         status,
         tcp,
         banner,
+        webdriver: None,
         fingerprint,
         diagnostics,
     }

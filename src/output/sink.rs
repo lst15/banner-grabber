@@ -29,6 +29,9 @@ impl OutputSink {
                     outcome.status_text()
                 )?;
                 writeln!(self.writer, "  banner: {}", outcome.banner.printable)?;
+                if let Some(webdriver) = &outcome.webdriver {
+                    writeln!(self.writer, "  webdriver: {}", webdriver)?;
+                }
                 if let Some(diag) = &outcome.diagnostics {
                     writeln!(
                         self.writer,
