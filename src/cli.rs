@@ -57,6 +57,10 @@ pub struct Cli {
     /// Protocol to probe (e.g. http, https, ftp)
     #[arg(long = "protocol", value_enum)]
     pub protocol: Protocol,
+
+    /// Use a headless browser (requires --protocol http or https)
+    #[arg(long = "webdriver", action = ArgAction::SetTrue)]
+    pub webdriver: bool,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -90,6 +94,7 @@ impl Cli {
             output,
             pretty,
             protocol,
+            webdriver,
         } = self;
 
         if host.is_none() && input.is_none() {
@@ -106,6 +111,10 @@ impl Cli {
 
         if rate == 0 {
             anyhow::bail!("rate must be greater than zero");
+        }
+
+        if webdriver && !matches!(protocol, Protocol::Http | Protocol::Https) {
+            anyhow::bail!("--webdriver requires --protocol http or --protocol https");
         }
 
         if input.is_some() && port.is_none() {
@@ -156,6 +165,7 @@ impl Cli {
                 Mode::Active => crate::model::ScanMode::Active,
             },
             protocol,
+            webdriver,
             output: crate::model::OutputConfig {
                 format: if pretty { OutputFormat::Pretty } else { output },
             },
@@ -183,6 +193,7 @@ mod tests {
             output: OutputFormat::Jsonl,
             pretty: false,
             protocol: Protocol::Ftp,
+            webdriver: false,
         };
 
         let cfg = cli.into_config().expect("config should build");
@@ -205,10 +216,36 @@ mod tests {
             output: OutputFormat::Jsonl,
             pretty: false,
             protocol: Protocol::Https,
+            webdriver: false,
         };
 
         let cfg = cli.into_config().expect("config should build");
         assert!(cfg.target.is_none());
         assert_eq!(cfg.port_filter, Some(443));
+    }
+
+    #[test]
+    fn rejects_webdriver_without_http_protocol() {
+        let cli = Cli {
+            host: Some("127.0.0.1".into()),
+            port: Some(21),
+            input: None,
+            concurrency: 1,
+            rate: 1,
+            connect_timeout_ms: 1500,
+            read_timeout_ms: 2000,
+            overall_timeout_ms: 4000,
+            max_bytes: 1024,
+            mode: Mode::Active,
+            output: OutputFormat::Jsonl,
+            pretty: false,
+            protocol: Protocol::Ftp,
+            webdriver: true,
+        };
+
+        let err = cli.into_config().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("--webdriver requires --protocol http or --protocol https"));
     }
 }

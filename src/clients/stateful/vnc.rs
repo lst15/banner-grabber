@@ -218,6 +218,7 @@ mod tests {
             max_bytes: 128,
             mode: ScanMode::Active,
             protocol: crate::model::Protocol::Vnc,
+            webdriver: false,
             output: OutputConfig {
                 format: OutputFormat::Pretty,
             },

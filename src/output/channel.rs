@@ -69,6 +69,7 @@ impl OutputChannel {
                 error: Some(error.clone()),
             },
             banner: Default::default(),
+            webdriver: None,
             fingerprint: Fingerprint::from_protocol(protocol),
             diagnostics: Some(Diagnostics {
                 stage: "pipeline".into(),
