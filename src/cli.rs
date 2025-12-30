@@ -38,6 +38,18 @@ pub struct Cli {
     #[arg(long = "overall-timeout", default_value_t = 4000)]
     pub overall_timeout_ms: u64,
 
+    /// Webdriver concurrency limit (defaults to --concurrency)
+    #[arg(long = "webdriver-concurrency")]
+    pub webdriver_concurrency: Option<usize>,
+
+    /// Webdriver rate limit (defaults to --rate)
+    #[arg(long = "webdriver-rate")]
+    pub webdriver_rate: Option<u32>,
+
+    /// Webdriver timeout in milliseconds (defaults to --overall-timeout)
+    #[arg(long = "webdriver-timeout")]
+    pub webdriver_timeout_ms: Option<u64>,
+
     /// Max bytes to capture from banner
     #[arg(long = "max-bytes", default_value_t = 4096)]
     pub max_bytes: usize,
@@ -89,6 +101,9 @@ impl Cli {
             connect_timeout_ms,
             read_timeout_ms,
             overall_timeout_ms,
+            webdriver_concurrency,
+            webdriver_rate,
+            webdriver_timeout_ms,
             max_bytes,
             mode,
             output,
@@ -111,6 +126,18 @@ impl Cli {
 
         if rate == 0 {
             anyhow::bail!("rate must be greater than zero");
+        }
+
+        if let Some(webdriver_rate) = webdriver_rate {
+            if webdriver_rate == 0 {
+                anyhow::bail!("webdriver rate must be greater than zero");
+            }
+        }
+
+        if let Some(webdriver_concurrency) = webdriver_concurrency {
+            if webdriver_concurrency == 0 {
+                anyhow::bail!("webdriver concurrency must be greater than zero");
+            }
         }
 
         if webdriver && !matches!(protocol, Protocol::Http | Protocol::Https) {
@@ -152,15 +179,24 @@ impl Cli {
         let min_overall_timeout =
             effective_connect_timeout.saturating_add(read_timeout.saturating_mul(2));
         let overall_timeout = overall_timeout.max(min_overall_timeout);
+        let webdriver_timeout = Duration::from_millis(
+            webdriver_timeout_ms
+                .unwrap_or_else(|| overall_timeout.as_millis().try_into().unwrap_or(u64::MAX)),
+        );
+        let webdriver_concurrency = webdriver_concurrency.unwrap_or(concurrency);
+        let webdriver_rate = webdriver_rate.unwrap_or(rate);
 
         Ok(crate::model::Config {
             target,
             input,
             concurrency,
             rate,
+            webdriver_concurrency,
+            webdriver_rate,
             connect_timeout,
             read_timeout,
             overall_timeout,
+            webdriver_timeout,
             max_bytes: max_bytes.max(1),
             port_filter,
             mode: scan_mode,
@@ -188,6 +224,9 @@ mod tests {
             connect_timeout_ms: 1500,
             read_timeout_ms: 2000,
             overall_timeout_ms: 3000,
+            webdriver_concurrency: None,
+            webdriver_rate: None,
+            webdriver_timeout_ms: None,
             max_bytes: 1024,
             mode: Mode::Active,
             output: OutputFormat::Jsonl,
@@ -211,6 +250,9 @@ mod tests {
             connect_timeout_ms: 1000,
             read_timeout_ms: 2000,
             overall_timeout_ms: 4000,
+            webdriver_concurrency: None,
+            webdriver_rate: None,
+            webdriver_timeout_ms: None,
             max_bytes: 2048,
             mode: Mode::Passive,
             output: OutputFormat::Jsonl,
@@ -235,6 +277,9 @@ mod tests {
             connect_timeout_ms: 1500,
             read_timeout_ms: 2000,
             overall_timeout_ms: 4000,
+            webdriver_concurrency: None,
+            webdriver_rate: None,
+            webdriver_timeout_ms: None,
             max_bytes: 1024,
             mode: Mode::Active,
             output: OutputFormat::Jsonl,
