@@ -135,35 +135,35 @@ impl Cli {
             None
         };
 
-        let ftp_connect_multiplier = if matches!(mode, Mode::Active) && matches!(port, Some(21)) {
-            // Active FTP handshakes can linger in connect; mirror the pipeline's
-            // extended connect timeout so the overall timeout leaves room for it.
-            4
-        } else {
-            1
+        let connect_timeout = Duration::from_millis(connect_timeout_ms);
+        let read_timeout = Duration::from_millis(read_timeout_ms);
+        let overall_timeout = Duration::from_millis(overall_timeout_ms);
+
+        let scan_mode = match mode {
+            Mode::Passive => crate::model::ScanMode::Passive,
+            Mode::Active => crate::model::ScanMode::Active,
         };
 
-        let effective_connect_timeout_ms =
-            connect_timeout_ms.saturating_mul(ftp_connect_multiplier);
+        let effective_connect_timeout = match port {
+            Some(port) => crate::model::adjusted_connect_timeout(connect_timeout, scan_mode, port),
+            None => connect_timeout,
+        };
 
-        let min_overall_timeout_ms =
-            effective_connect_timeout_ms.saturating_add(read_timeout_ms.saturating_mul(2));
-        let overall_timeout_ms = overall_timeout_ms.max(min_overall_timeout_ms);
+        let min_overall_timeout =
+            effective_connect_timeout.saturating_add(read_timeout.saturating_mul(2));
+        let overall_timeout = overall_timeout.max(min_overall_timeout);
 
         Ok(crate::model::Config {
             target,
             input,
             concurrency,
             rate,
-            connect_timeout: Duration::from_millis(connect_timeout_ms),
-            read_timeout: Duration::from_millis(read_timeout_ms),
-            overall_timeout: Duration::from_millis(overall_timeout_ms),
+            connect_timeout,
+            read_timeout,
+            overall_timeout,
             max_bytes: max_bytes.max(1),
             port_filter,
-            mode: match mode {
-                Mode::Passive => crate::model::ScanMode::Passive,
-                Mode::Active => crate::model::ScanMode::Active,
-            },
+            mode: scan_mode,
             protocol,
             webdriver,
             output: crate::model::OutputConfig {

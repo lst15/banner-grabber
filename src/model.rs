@@ -40,6 +40,17 @@ pub enum ScanMode {
     Active,
 }
 
+pub fn adjusted_connect_timeout(connect_timeout: Duration, mode: ScanMode, port: u16) -> Duration {
+    if matches!(mode, ScanMode::Active) && port == 21 {
+        // FTP servers are often slower to finish the TCP handshake due to
+        // connection tracking and banner throttling. Give them extra time so
+        // we don't misclassify healthy endpoints as timeouts in active mode.
+        return connect_timeout.saturating_mul(4);
+    }
+
+    connect_timeout
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputConfig {
     pub format: OutputFormat,
@@ -212,5 +223,20 @@ mod tests {
         };
         let view = target.view();
         assert_eq!(view.addr, "127.0.0.1");
+    }
+
+    #[test]
+    fn extends_timeout_for_active_ftp() {
+        let timeout = adjusted_connect_timeout(Duration::from_secs(1), ScanMode::Active, 21);
+        assert_eq!(timeout, Duration::from_secs(4));
+    }
+
+    #[test]
+    fn leaves_timeout_unchanged_for_other_modes_and_ports() {
+        let timeout = adjusted_connect_timeout(Duration::from_secs(1), ScanMode::Passive, 21);
+        assert_eq!(timeout, Duration::from_secs(1));
+
+        let timeout = adjusted_connect_timeout(Duration::from_secs(1), ScanMode::Active, 22);
+        assert_eq!(timeout, Duration::from_secs(1));
     }
 }

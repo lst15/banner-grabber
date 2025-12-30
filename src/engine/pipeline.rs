@@ -1,11 +1,10 @@
 use crate::clients::{client_for_target, udp_client_for_target, ClientRequest};
 use crate::model::{
-    Config, Diagnostics, Fingerprint, Protocol, ReadStopReason, ScanMode, ScanOutcome, Status,
-    TcpMeta,
+    Config, Diagnostics, Fingerprint, Protocol, ReadStopReason, ScanOutcome, Status, TcpMeta,
 };
-use crate::webdriver;
 use crate::probe::{probe_for_target, ProbeRequest};
 use crate::util::now_millis;
+use crate::webdriver;
 use async_trait::async_trait;
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -35,7 +34,11 @@ impl TargetProcessor for DefaultProcessor {
     ) -> anyhow::Result<ScanOutcome> {
         let start = now_millis();
         let tcp_start = now_millis();
-        let connect_timeout = adjusted_connect_timeout(config.as_ref(), &target);
+        let connect_timeout = crate::model::adjusted_connect_timeout(
+            config.connect_timeout,
+            config.mode,
+            target.resolved.port(),
+        );
 
         let client_request = ClientRequest {
             target: target.clone(),
@@ -77,12 +80,8 @@ impl TargetProcessor for DefaultProcessor {
         let fingerprint = Fingerprint::from_protocol(&config.protocol);
         let banner = BannerReader::new(config.max_bytes, config.read_timeout).render(read_result);
         let (webdriver_body, diagnostics) = if config.webdriver {
-            match webdriver::fetch_rendered_body(
-                &target,
-                &config.protocol,
-                config.overall_timeout,
-            )
-            .await
+            match webdriver::fetch_rendered_body(&target, &config.protocol, config.overall_timeout)
+                .await
             {
                 Ok(body) => (Some(body), None),
                 Err(err) => (
@@ -295,73 +294,6 @@ async fn process_tcp_stream(
                 &config.protocol,
             )),
         }
-    }
-}
-
-fn adjusted_connect_timeout(config: &Config, target: &crate::model::Target) -> Duration {
-    if matches!(config.mode, ScanMode::Active) && target.resolved.port() == 21 {
-        // FTP servers are often slower to finish the TCP handshake due to
-        // connection tracking and banner throttling. Give them extra time so
-        // we don't misclassify healthy endpoints as timeouts in active mode.
-        return config.connect_timeout.saturating_mul(4);
-    }
-
-    config.connect_timeout
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::model::{OutputConfig, OutputFormat, Protocol, Target, TargetSpec};
-
-    fn baseline_config(mode: ScanMode, connect_timeout: Duration) -> Config {
-        Config {
-            target: None,
-            input: None,
-            port_filter: None,
-            concurrency: 1,
-            rate: 1,
-            connect_timeout,
-            read_timeout: Duration::from_secs(1),
-            overall_timeout: Duration::from_secs(5),
-            max_bytes: 64,
-            mode,
-            protocol: Protocol::Http,
-            webdriver: false,
-            output: OutputConfig {
-                format: OutputFormat::Jsonl,
-            },
-        }
-    }
-
-    fn ftp_target() -> Target {
-        Target {
-            original: TargetSpec {
-                host: "example.com".into(),
-                port: 21,
-            },
-            resolved: "198.51.100.10:21".parse().unwrap(),
-        }
-    }
-
-    #[test]
-    fn extends_timeout_for_active_ftp() {
-        let config = baseline_config(ScanMode::Active, Duration::from_secs(1));
-        let timeout = adjusted_connect_timeout(&config, &ftp_target());
-        assert_eq!(timeout, Duration::from_secs(4));
-    }
-
-    #[test]
-    fn leaves_timeout_unchanged_for_other_modes_and_ports() {
-        let config = baseline_config(ScanMode::Passive, Duration::from_secs(1));
-        let timeout = adjusted_connect_timeout(&config, &ftp_target());
-        assert_eq!(timeout, Duration::from_secs(1));
-
-        let mut active_non_ftp = ftp_target();
-        active_non_ftp.resolved.set_port(22);
-        let active_config = baseline_config(ScanMode::Active, Duration::from_secs(1));
-        let timeout_active = adjusted_connect_timeout(&active_config, &active_non_ftp);
-        assert_eq!(timeout_active, Duration::from_secs(1));
     }
 }
 
