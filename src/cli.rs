@@ -113,9 +113,7 @@ impl Cli {
             anyhow::bail!("rate must be greater than zero");
         }
 
-        if webdriver && !matches!(protocol, Protocol::Http | Protocol::Https) {
-            anyhow::bail!("--webdriver requires --protocol http or --protocol https");
-        }
+        let webdriver = webdriver && matches!(protocol, Protocol::Http | Protocol::Https);
 
         if input.is_some() && port.is_none() {
             anyhow::bail!("--port is required when using --input");
