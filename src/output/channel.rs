@@ -73,6 +73,7 @@ impl OutputChannel {
             timestamp: now_iso8601(),
             ttl: None,
             webdriver: None,
+            tls_info: None,
             fingerprint: Fingerprint::from_protocol(protocol),
             diagnostics: Some(Diagnostics {
                 stage: "pipeline".into(),

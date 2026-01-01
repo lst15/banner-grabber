@@ -1,11 +1,15 @@
 use super::Prober;
 use crate::engine::reader::{BannerReader, ReadResult};
-use crate::model::{Config, Target};
+use crate::model::{Config, Target, TlsInfo};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
+use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
+use openssl::x509::X509NameRef;
+use std::pin::Pin;
 use std::sync::OnceLock;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio_openssl::SslStream;
 
 pub(super) struct HttpsProbe;
 
@@ -38,10 +42,18 @@ impl Prober for HttpsProbe {
             host.to_string()
         };
 
-        let mut tls_stream = connector
-            .connect(&sni_host, stream)
+        let ssl = connector
+            .configure()
+            .context("failed to configure TLS connector")?
+            .into_ssl(&sni_host)
+            .context("failed to configure TLS SNI")?;
+        let mut tls_stream =
+            SslStream::new(ssl, stream).context("failed to initialize TLS stream")?;
+        Pin::new(&mut tls_stream)
+            .connect()
             .await
             .with_context(|| format!("TLS handshake failed for host {host}"))?;
+        let tls_info = extract_tls_info(&tls_stream);
 
         let host_header = if host.is_empty() {
             sni_host.as_str()
@@ -69,6 +81,7 @@ impl Prober for HttpsProbe {
                     result.truncated = true;
                     result.reason = crate::model::ReadStopReason::SizeLimit;
                 }
+                result.tls_info = Some(tls_info);
                 return Ok(result);
             }
 
@@ -106,6 +119,7 @@ impl Prober for HttpsProbe {
             result.bytes.extend_from_slice(&buf[..read]);
         }
 
+        result.tls_info = Some(tls_info);
         Ok(result)
     }
 }
@@ -156,21 +170,54 @@ mod tests {
     }
 }
 
-fn https_connector() -> anyhow::Result<&'static tokio_native_tls::TlsConnector> {
-    static CONNECTOR: OnceLock<anyhow::Result<tokio_native_tls::TlsConnector>> = OnceLock::new();
+fn https_connector() -> anyhow::Result<&'static SslConnector> {
+    static CONNECTOR: OnceLock<anyhow::Result<SslConnector>> = OnceLock::new();
 
     CONNECTOR
         .get_or_init(|| {
-            let mut builder = native_tls::TlsConnector::builder();
+            let mut builder = SslConnector::builder(SslMethod::tls()).map_err(|e| anyhow!(e))?;
             // We only need to complete the handshake to read the banner, so accept
             // any certificate and hostname.
-            builder.danger_accept_invalid_certs(true);
-            builder.danger_accept_invalid_hostnames(true);
-            builder
-                .build()
-                .map(tokio_native_tls::TlsConnector::from)
-                .map_err(|e| anyhow!(e))
+            builder.set_verify(SslVerifyMode::NONE);
+            Ok(builder.build())
         })
         .as_ref()
         .map_err(|err| anyhow!("failed to create TLS connector: {err}"))
+}
+
+fn extract_tls_info(stream: &SslStream<TcpStream>) -> TlsInfo {
+    let ssl = stream.ssl();
+    let mut info = TlsInfo {
+        cipher: ssl
+            .current_cipher()
+            .map(|cipher| cipher.name().to_string())
+            .unwrap_or_default(),
+        version: ssl.version_str().to_string(),
+        ..TlsInfo::default()
+    };
+
+    if let Some(cert) = ssl.peer_certificate() {
+        info.cert_subject = format_x509_name(cert.subject_name());
+        info.cert_issuer = format_x509_name(cert.issuer_name());
+        info.cert_valid_from = cert.not_before().to_string();
+        info.cert_valid_to = cert.not_after().to_string();
+    }
+
+    info
+}
+
+fn format_x509_name(name: &X509NameRef) -> String {
+    let mut parts = Vec::new();
+    for entry in name.entries() {
+        let key = entry.object().nid().short_name().unwrap_or("UNKNOWN");
+        let value = entry
+            .data()
+            .as_utf8()
+            .map(|val| val.to_string())
+            .unwrap_or_default();
+        if !value.is_empty() {
+            parts.push(format!("{key}={value}"));
+        }
+    }
+    parts.join(", ")
 }

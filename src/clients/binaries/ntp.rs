@@ -38,6 +38,7 @@ impl UdpClient for NtpClient {
                     bytes: buf,
                     reason: ReadStopReason::ConnectionClosed,
                     truncated: n >= cfg.max_bytes,
+                    tls_info: None,
                 })
             }
             Ok(Err(err)) => Err(err.into()),
@@ -45,6 +46,7 @@ impl UdpClient for NtpClient {
                 bytes: Vec::new(),
                 reason: ReadStopReason::Timeout,
                 truncated: false,
+                tls_info: None,
             }),
         }
     }
