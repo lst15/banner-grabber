@@ -75,6 +75,7 @@ impl TargetProcessor for DefaultProcessor {
         };
 
         let fingerprint = Fingerprint::from_protocol(&config.protocol);
+        let tls_info = read_result.tls_info.clone();
         let banner = BannerReader::new(config.max_bytes, config.read_timeout).render(read_result);
         let (webdriver_body, diagnostics) = if config.webdriver {
             match webdriver::fetch_rendered_body(&target, &config.protocol, config.overall_timeout)
@@ -103,6 +104,7 @@ impl TargetProcessor for DefaultProcessor {
             timestamp: now_iso8601(),
             ttl: None,
             webdriver: webdriver_body,
+            tls_info,
             fingerprint,
             diagnostics,
         })
@@ -147,6 +149,7 @@ async fn attempt_udp_scan(
         };
         let banner =
             BannerReader::new(config.max_bytes, config.read_timeout).render(read_result.clone());
+        let tls_info = read_result.tls_info.clone();
         let fingerprint = Fingerprint::from_protocol(&config.protocol);
         let elapsed = now_millis() - udp_start;
 
@@ -161,6 +164,7 @@ async fn attempt_udp_scan(
             timestamp: now_iso8601(),
             ttl: None,
             webdriver: None,
+            tls_info,
             fingerprint,
             diagnostics: None,
         }));
@@ -380,6 +384,7 @@ fn build_outcome_with_context(
         truncated: matches!(reason, ReadStopReason::SizeLimit) || bytes.len() >= max_bytes,
         bytes,
         reason: reason.clone(),
+        tls_info: None,
     };
     let banner = BannerReader::new(max_bytes, idle_timeout).render(read_result.clone());
     let fingerprint = Fingerprint::from_protocol(protocol);
@@ -391,6 +396,7 @@ fn build_outcome_with_context(
         timestamp: now_iso8601(),
         ttl: None,
         webdriver: None,
+        tls_info: None,
         fingerprint,
         diagnostics,
     }

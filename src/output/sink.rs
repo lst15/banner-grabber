@@ -1,4 +1,4 @@
-use crate::model::{OutputConfig, OutputFormat, ScanOutcome, Status};
+use crate::model::{OutputConfig, OutputFormat, ScanOutcome, Status, TlsInfo};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -32,7 +32,7 @@ impl OutputSink {
             OutputFormat::Jsonl => {
                 let proto = outcome.fingerprint.protocol.as_deref().unwrap_or("unknown");
                 let data = if matches!(proto, "http" | "https") {
-                    http_data(&outcome)
+                    http_data(&outcome, proto)
                 } else {
                     serde_json::json!({})
                 };
@@ -76,12 +76,17 @@ impl OutputSink {
     }
 }
 
-fn http_data(outcome: &ScanOutcome) -> Value {
+fn http_data(outcome: &ScanOutcome, proto: &str) -> Value {
     let status_reqwest = parse_http_status_code(&outcome.banner.printable).unwrap_or_default();
     let title = extract_html_title(&outcome.banner.printable).unwrap_or_default();
     let body = extract_http_body(&outcome.banner.printable);
     let engine_body = outcome.webdriver.clone().unwrap_or_default();
     let headers = parse_http_headers(&outcome.banner.printable);
+    let tls_info = if proto == "https" {
+        outcome.tls_info.clone().unwrap_or_default()
+    } else {
+        TlsInfo::default()
+    };
     let location = find_header_value(&headers, "Location");
     let redirect_entry = location
         .as_deref()
@@ -102,12 +107,12 @@ fn http_data(outcome: &ScanOutcome) -> Value {
             redirect_entry
         ],
         "tls_info": {
-            "cipher": "",
-            "version": "",
-            "cert_subject": "",
-            "cert_issuer": "",
-            "cert_valid_from": "",
-            "cert_valid_to": "",
+            "cipher": tls_info.cipher,
+            "version": tls_info.version,
+            "cert_subject": tls_info.cert_subject,
+            "cert_issuer": tls_info.cert_issuer,
+            "cert_valid_from": tls_info.cert_valid_from,
+            "cert_valid_to": tls_info.cert_valid_to,
         },
     })
 }

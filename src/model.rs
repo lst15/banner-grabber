@@ -121,6 +121,8 @@ pub struct ScanOutcome {
     pub ttl: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webdriver: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls_info: Option<TlsInfo>,
     pub fingerprint: Fingerprint,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagnostics: Option<Diagnostics>,
@@ -145,6 +147,16 @@ pub struct Banner {
     pub printable: String,
     pub truncated: bool,
     pub read_reason: ReadStopReason,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TlsInfo {
+    pub cert_issuer: String,
+    pub cert_subject: String,
+    pub cert_valid_from: String,
+    pub cert_valid_to: String,
+    pub cipher: String,
+    pub version: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

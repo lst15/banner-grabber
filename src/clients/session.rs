@@ -60,15 +60,20 @@ impl ClientSession {
             bytes,
             reason: ReadStopReason::NotStarted,
             truncated: false,
+            tls_info: None,
         });
     }
 
     pub(super) fn finish(mut self) -> ReadResult {
         let mut merged = Vec::new();
         let mut reason = ReadStopReason::NotStarted;
+        let mut tls_info = None;
 
         for part in self.parts.drain(..) {
             reason = part.reason.clone();
+            if tls_info.is_none() {
+                tls_info = part.tls_info.clone();
+            }
             if merged.len() < self.max_bytes {
                 let remaining = self.max_bytes - merged.len();
                 let take = part.bytes.len().min(remaining);
@@ -86,6 +91,7 @@ impl ClientSession {
             bytes: merged,
             reason,
             truncated: self.truncated || final_len >= self.max_bytes,
+            tls_info,
         }
     }
 }
@@ -119,11 +125,13 @@ mod tests {
             bytes: b"hello".to_vec(),
             reason: ReadStopReason::Delimiter,
             truncated: false,
+            tls_info: None,
         });
         session.parts.push(ReadResult {
             bytes: b"world".to_vec(),
             reason: ReadStopReason::ConnectionClosed,
             truncated: false,
+            tls_info: None,
         });
         let result = session.finish();
         assert_eq!(result.bytes, b"hello".to_vec());

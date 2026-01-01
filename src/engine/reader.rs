@@ -1,4 +1,4 @@
-use crate::model::{Banner, ReadStopReason};
+use crate::model::{Banner, ReadStopReason, TlsInfo};
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::time::timeout;
@@ -50,6 +50,7 @@ impl BannerReader {
             bytes: buf,
             reason,
             truncated: total >= self.max_bytes,
+            tls_info: None,
         })
     }
 
@@ -70,6 +71,7 @@ pub struct ReadResult {
     pub bytes: Vec<u8>,
     pub reason: ReadStopReason,
     pub truncated: bool,
+    pub tls_info: Option<TlsInfo>,
 }
 
 fn find_delimiter(buf: &[u8], extra: Option<&[u8]>) -> Option<usize> {
