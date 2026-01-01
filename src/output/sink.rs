@@ -1,6 +1,7 @@
 use crate::model::{OutputConfig, OutputFormat, ScanOutcome, Status};
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::io::{BufWriter, Write};
 
 pub struct OutputSink {
@@ -79,21 +80,24 @@ fn http_data(outcome: &ScanOutcome) -> Value {
     let status_reqwest = parse_http_status_code(&outcome.banner.printable).unwrap_or_default();
     let title = extract_html_title(&outcome.banner.printable).unwrap_or_default();
     let engine_body = outcome.webdriver.clone().unwrap_or_default();
+    let headers = parse_http_headers(&outcome.banner.printable);
+    let location = find_header_value(&headers, "Location");
+    let redirect_entry = location
+        .as_deref()
+        .map(|url| serde_json::json!({ "url": url, "status": status_reqwest }))
+        .unwrap_or_else(|| serde_json::json!({ "url": "", "status": "" }));
     serde_json::json!({
         "status_code": {
             "engine": "",
             "reqwest": status_reqwest,
         },
-        "headers": {},
+        "headers": headers,
         "engine_body": engine_body,
         "title": title,
         "favicon_hash": "",
         "technologies": "",
         "redirects": [
-            {
-                "url": "",
-                "status": "",
-            }
+            redirect_entry
         ],
         "tls_info": {
             "cipher": "",
@@ -115,6 +119,48 @@ fn parse_http_status_code(printable: &str) -> Option<String> {
     }
     let code = parts.next()?;
     Some(code.to_string())
+}
+
+fn parse_http_headers(printable: &str) -> BTreeMap<String, String> {
+    let mut headers = BTreeMap::new();
+    let mut lines = printable.lines();
+    let first_line = match lines.next() {
+        Some(line) => line.trim_start(),
+        None => return headers,
+    };
+    if !first_line.to_ascii_uppercase().starts_with("HTTP/") {
+        return headers;
+    }
+    for line in lines {
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            break;
+        }
+        let Some((name, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let key = name.trim().to_string();
+        let val = value.trim().to_string();
+        headers
+            .entry(key)
+            .and_modify(|existing| {
+                if !val.is_empty() {
+                    if !existing.is_empty() {
+                        existing.push_str(", ");
+                    }
+                    existing.push_str(&val);
+                }
+            })
+            .or_insert(val);
+    }
+    headers
+}
+
+fn find_header_value(headers: &BTreeMap<String, String>, name: &str) -> Option<String> {
+    headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.clone())
 }
 
 fn extract_html_title(printable: &str) -> Option<String> {
