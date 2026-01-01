@@ -79,6 +79,7 @@ impl OutputSink {
 fn http_data(outcome: &ScanOutcome) -> Value {
     let status_reqwest = parse_http_status_code(&outcome.banner.printable).unwrap_or_default();
     let title = extract_html_title(&outcome.banner.printable).unwrap_or_default();
+    let body = extract_http_body(&outcome.banner.printable);
     let engine_body = outcome.webdriver.clone().unwrap_or_default();
     let headers = parse_http_headers(&outcome.banner.printable);
     let location = find_header_value(&headers, "Location");
@@ -92,6 +93,7 @@ fn http_data(outcome: &ScanOutcome) -> Value {
             "reqwest": status_reqwest,
         },
         "headers": headers,
+        "body": body,
         "engine_body": engine_body,
         "title": title,
         "favicon_hash": "",
@@ -108,6 +110,16 @@ fn http_data(outcome: &ScanOutcome) -> Value {
             "cert_valid_to": "",
         },
     })
+}
+
+fn extract_http_body(printable: &str) -> String {
+    if let Some(idx) = printable.find("\r\n\r\n") {
+        return printable[idx + 4..].to_string();
+    }
+    if let Some(idx) = printable.find("\n\n") {
+        return printable[idx + 2..].to_string();
+    }
+    String::new()
 }
 
 fn parse_http_status_code(printable: &str) -> Option<String> {
