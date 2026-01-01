@@ -117,6 +117,8 @@ pub struct ScanOutcome {
     pub status: Status,
     pub tcp: TcpMeta,
     pub banner: Banner,
+    pub timestamp: String,
+    pub ttl: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webdriver: Option<String>,
     pub fingerprint: Fingerprint,

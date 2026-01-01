@@ -3,9 +3,9 @@ use crate::model::{
     Config, Diagnostics, Fingerprint, Protocol, ReadStopReason, ScanMode, ScanOutcome, Status,
     TcpMeta,
 };
-use crate::webdriver;
 use crate::probe::{probe_for_target, ProbeRequest};
-use crate::util::now_millis;
+use crate::util::{now_iso8601, now_millis};
+use crate::webdriver;
 use async_trait::async_trait;
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -77,12 +77,8 @@ impl TargetProcessor for DefaultProcessor {
         let fingerprint = Fingerprint::from_protocol(&config.protocol);
         let banner = BannerReader::new(config.max_bytes, config.read_timeout).render(read_result);
         let (webdriver_body, diagnostics) = if config.webdriver {
-            match webdriver::fetch_rendered_body(
-                &target,
-                &config.protocol,
-                config.overall_timeout,
-            )
-            .await
+            match webdriver::fetch_rendered_body(&target, &config.protocol, config.overall_timeout)
+                .await
             {
                 Ok(body) => (Some(body), None),
                 Err(err) => (
@@ -104,6 +100,8 @@ impl TargetProcessor for DefaultProcessor {
             status: Status::Open,
             tcp: tcp_meta,
             banner,
+            timestamp: now_iso8601(),
+            ttl: None,
             webdriver: webdriver_body,
             fingerprint,
             diagnostics,
@@ -160,6 +158,8 @@ async fn attempt_udp_scan(
                 error: None,
             },
             banner,
+            timestamp: now_iso8601(),
+            ttl: None,
             webdriver: None,
             fingerprint,
             diagnostics: None,
@@ -388,6 +388,8 @@ fn build_outcome_with_context(
         status,
         tcp,
         banner,
+        timestamp: now_iso8601(),
+        ttl: None,
         webdriver: None,
         fingerprint,
         diagnostics,
