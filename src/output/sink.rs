@@ -80,6 +80,7 @@ fn http_data(outcome: &ScanOutcome) -> Value {
     let status_reqwest = parse_http_status_code(&outcome.banner.printable).unwrap_or_default();
     let title = extract_html_title(&outcome.banner.printable).unwrap_or_default();
     let engine_body = outcome.webdriver.clone().unwrap_or_default();
+    let body = extract_raw_body(&outcome.banner.printable).unwrap_or_default();
     let headers = parse_http_headers(&outcome.banner.printable);
     let location = find_header_value(&headers, "Location");
     let redirect_entry = location
@@ -93,6 +94,7 @@ fn http_data(outcome: &ScanOutcome) -> Value {
         },
         "headers": headers,
         "engine_body": engine_body,
+        "body": body,
         "title": title,
         "favicon_hash": "",
         "technologies": "",
@@ -175,6 +177,16 @@ fn extract_html_title(printable: &str) -> Option<String> {
     } else {
         Some(title.to_string())
     }
+}
+
+fn extract_raw_body(printable: &str) -> Option<String> {
+    if let Some((_, body)) = printable.split_once("\r\n\r\n") {
+        return Some(body.to_string());
+    }
+    if let Some((_, body)) = printable.split_once("\n\n") {
+        return Some(body.to_string());
+    }
+    None
 }
 
 impl ScanOutcome {
