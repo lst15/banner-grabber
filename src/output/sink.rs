@@ -1,9 +1,21 @@
 use crate::model::{OutputConfig, OutputFormat, ScanOutcome, Status};
+use serde::Serialize;
+use serde_json::Value;
 use std::io::{BufWriter, Write};
 
 pub struct OutputSink {
     cfg: OutputConfig,
     writer: BufWriter<std::io::Stdout>,
+}
+
+#[derive(Serialize)]
+struct StandardizedOutcome<'a> {
+    ip: &'a str,
+    timestamp: &'a str,
+    port: u16,
+    proto: &'a str,
+    ttl: Option<u8>,
+    data: Value,
 }
 
 impl OutputSink {
@@ -17,7 +29,16 @@ impl OutputSink {
     pub fn write_outcome(&mut self, outcome: ScanOutcome) -> anyhow::Result<()> {
         match self.cfg.format {
             OutputFormat::Jsonl => {
-                let line = serde_json::to_string(&outcome)?;
+                let proto = outcome.fingerprint.protocol.as_deref().unwrap_or("unknown");
+                let formatted = StandardizedOutcome {
+                    ip: &outcome.target.addr,
+                    timestamp: &outcome.timestamp,
+                    port: outcome.target.port,
+                    proto,
+                    ttl: outcome.ttl,
+                    data: serde_json::json!({}),
+                };
+                let line = serde_json::to_string(&formatted)?;
                 writeln!(self.writer, "{line}")?;
             }
             OutputFormat::Pretty => {

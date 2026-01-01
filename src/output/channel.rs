@@ -1,6 +1,7 @@
 use crate::model::{
     Diagnostics, Fingerprint, OutputConfig, Protocol, ScanOutcome, Status, Target, TcpMeta,
 };
+use crate::util::now_iso8601;
 use tokio::sync::mpsc;
 
 use super::sink::OutputSink;
@@ -69,6 +70,8 @@ impl OutputChannel {
                 error: Some(error.clone()),
             },
             banner: Default::default(),
+            timestamp: now_iso8601(),
+            ttl: None,
             webdriver: None,
             fingerprint: Fingerprint::from_protocol(protocol),
             diagnostics: Some(Diagnostics {
