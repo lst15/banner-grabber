@@ -33,6 +33,8 @@ impl OutputSink {
                 let proto = outcome.fingerprint.protocol.as_deref().unwrap_or("unknown");
                 let data = if matches!(proto, "http" | "https") {
                     http_data(&outcome, proto)
+                } else if proto == "ssh" {
+                    ssh_data(&outcome)
                 } else {
                     serde_json::json!({})
                 };
@@ -122,6 +124,39 @@ fn http_data(outcome: &ScanOutcome, proto: &str) -> Value {
             "cert_valid_to": tls_info.cert_valid_to,
         },
     })
+}
+
+fn ssh_data(outcome: &ScanOutcome) -> Value {
+    let banner_raw = decode_banner_raw(&outcome.banner.raw_hex).unwrap_or_default();
+    let banner = banner_raw.trim_end_matches(&['\r', '\n'][..]).to_string();
+    serde_json::json!({
+        "banner_raw": banner_raw,
+        "banner": banner,
+        "software": {
+            "product": "",
+            "version": "",
+            "os": "",
+        },
+        "key_exchange": [],
+        "server_host_key_algorithms": [],
+        "encryption_algorithms_client_to_server": [],
+        "encryption_algorithms_server_to_client": [],
+        "mac_algorithms_client_to_server": [],
+        "mac_algorithms_server_to_client": [],
+        "compression_algorithms": [],
+        "strict_key_exchange": false,
+        "weak_algorithms": [],
+        "fingerprint": {
+            "rsa": "",
+            "ecdsa": "",
+            "ed25519": "",
+        },
+    })
+}
+
+fn decode_banner_raw(raw_hex: &str) -> Option<String> {
+    let bytes = crate::util::hex::from_hex(raw_hex).ok()?;
+    Some(String::from_utf8_lossy(&bytes).to_string())
 }
 
 fn extract_http_body(printable: &str) -> String {
