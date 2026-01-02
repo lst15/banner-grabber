@@ -169,18 +169,10 @@ fn ssh_data(outcome: &ScanOutcome) -> Value {
 }
 
 fn imap_data(outcome: &ScanOutcome) -> Value {
-    let printable = if !outcome.banner.printable.is_empty() {
-        outcome.banner.printable.clone()
-    } else {
-        decode_banner_raw(&outcome.banner.raw_hex).unwrap_or_default()
-    };
-    let lines: Vec<&str> = printable.lines().collect();
-    let banner_line = lines
-        .iter()
-        .find(|line| !line.trim().is_empty())
-        .copied()
-        .unwrap_or_default();
-    let banner = banner_line.trim().to_string();
+    let transcript = raw_banner_for_data(outcome);
+    let lines: Vec<&str> = transcript.lines().collect();
+    let banner = find_imap_banner_line(&lines)
+        .unwrap_or_else(|| transcript.trim().to_string());
     let server_identity = parse_imap_server_identity(&banner);
     let (server_software, software_version) = parse_imap_software(&server_identity);
     let capabilities = collect_imap_capabilities(&lines);
@@ -242,6 +234,26 @@ fn parse_imap_server_identity(banner: &str) -> String {
         }
     }
     trimmed.to_string()
+}
+
+fn find_imap_banner_line(lines: &[&str]) -> Option<String> {
+    let mut fallback = None;
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if fallback.is_none() {
+            fallback = Some(trimmed.to_string());
+        }
+        if trimmed.to_ascii_uppercase().starts_with("* OK")
+            || trimmed.to_ascii_uppercase().starts_with("* PREAUTH")
+            || trimmed.to_ascii_uppercase().starts_with("* BYE")
+        {
+            return Some(trimmed.to_string());
+        }
+    }
+    fallback
 }
 
 fn parse_imap_software(identity: &str) -> (String, Option<String>) {
