@@ -36,7 +36,7 @@ impl OutputSink {
                 } else if proto == "ssh" {
                     ssh_data(&outcome)
                 } else {
-                    serde_json::json!({})
+                    serde_json::json!(raw_banner_for_data(&outcome))
                 };
                 let formatted = StandardizedOutcome {
                     ip: &outcome.target.addr,
@@ -164,6 +164,13 @@ fn ssh_data(outcome: &ScanOutcome) -> Value {
             "ed25519": "",
         },
     })
+}
+
+fn raw_banner_for_data(outcome: &ScanOutcome) -> String {
+    if !outcome.banner.printable.is_empty() {
+        return outcome.banner.printable.clone();
+    }
+    decode_banner_raw(&outcome.banner.raw_hex).unwrap_or_default()
 }
 
 fn decode_banner_raw(raw_hex: &str) -> Option<String> {
