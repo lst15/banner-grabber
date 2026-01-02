@@ -1,19 +1,15 @@
-mod cli;
-mod clients;
-mod engine;
-mod input;
-mod model;
-mod output;
-mod probe;
-mod util;
-mod webdriver;
-
+#[cfg(feature = "cli")]
+use banner_grabber::cli::Cli;
+#[cfg(feature = "cli")]
+use banner_grabber::core::engine::Engine;
+#[cfg(feature = "cli")]
+use banner_grabber::core::output::OutputChannel;
+#[cfg(feature = "cli")]
 use clap::Parser;
-use cli::Cli;
-use engine::Engine;
-use output::OutputChannel;
+#[cfg(feature = "cli")]
 use tracing_subscriber::EnvFilter;
 
+#[cfg(feature = "cli")]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -30,4 +26,9 @@ async fn main() -> anyhow::Result<()> {
     engine.run().await?;
 
     Ok(())
+}
+
+#[cfg(not(feature = "cli"))]
+fn main() {
+    eprintln!("CLI support is disabled. Enable the `cli` feature to build the binary.");
 }

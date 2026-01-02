@@ -1,4 +1,4 @@
-use banner_grabber::engine::reader::BannerReader;
+use banner_grabber::core::engine::reader::BannerReader;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -10,6 +10,7 @@ async fn reader_handles_delayed_banner() {
     assert_eq!(banner.bytes, b"hello\r\n");
 }
 
+#[cfg(feature = "db")]
 #[tokio::test]
 async fn simulated_service_requires_probe() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -23,8 +24,8 @@ async fn simulated_service_requires_probe() {
         socket.write_all(b"-ERR mock redis\r\n").await.unwrap();
     });
 
-    let cfg = banner_grabber::model::Config {
-        target: Some(banner_grabber::model::TargetSpec {
+    let cfg = banner_grabber::core::model::Config {
+        target: Some(banner_grabber::core::model::TargetSpec {
             host: "127.0.0.1".into(),
             port: addr.port(),
         }),
@@ -36,18 +37,19 @@ async fn simulated_service_requires_probe() {
         read_timeout: std::time::Duration::from_millis(500),
         overall_timeout: std::time::Duration::from_millis(1000),
         max_bytes: 128,
-        mode: banner_grabber::model::ScanMode::Active,
-        protocol: banner_grabber::model::Protocol::Redis,
-        output: banner_grabber::model::OutputConfig {
-            format: banner_grabber::model::OutputFormat::Pretty,
+        mode: banner_grabber::core::model::ScanMode::Active,
+        protocol: banner_grabber::core::model::Protocol::Redis,
+        output: banner_grabber::core::model::OutputConfig {
+            format: banner_grabber::core::model::OutputFormat::Pretty,
         },
     };
 
-    let sink = banner_grabber::output::OutputChannel::new(cfg.output.clone()).unwrap();
-    let mut engine = banner_grabber::engine::Engine::new(cfg, sink).unwrap();
+    let sink = banner_grabber::core::output::OutputChannel::new(cfg.output.clone()).unwrap();
+    let mut engine = banner_grabber::core::engine::Engine::new(cfg, sink).unwrap();
     engine.run().await.unwrap();
 }
 
+#[cfg(feature = "web")]
 #[tokio::test]
 async fn http_probe_runs_on_nonstandard_ports() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -66,8 +68,8 @@ async fn http_probe_runs_on_nonstandard_ports() {
             .unwrap();
     });
 
-    let cfg = banner_grabber::model::Config {
-        target: Some(banner_grabber::model::TargetSpec {
+    let cfg = banner_grabber::core::model::Config {
+        target: Some(banner_grabber::core::model::TargetSpec {
             host: "127.0.0.1".into(),
             port: addr.port(),
         }),
@@ -79,18 +81,19 @@ async fn http_probe_runs_on_nonstandard_ports() {
         read_timeout: std::time::Duration::from_millis(1000),
         overall_timeout: std::time::Duration::from_millis(1500),
         max_bytes: 128,
-        mode: banner_grabber::model::ScanMode::Active,
-        protocol: banner_grabber::model::Protocol::Http,
-        output: banner_grabber::model::OutputConfig {
-            format: banner_grabber::model::OutputFormat::Pretty,
+        mode: banner_grabber::core::model::ScanMode::Active,
+        protocol: banner_grabber::core::model::Protocol::Http,
+        output: banner_grabber::core::model::OutputConfig {
+            format: banner_grabber::core::model::OutputFormat::Pretty,
         },
     };
 
-    let sink = banner_grabber::output::OutputChannel::new(cfg.output.clone()).unwrap();
-    let mut engine = banner_grabber::engine::Engine::new(cfg, sink).unwrap();
+    let sink = banner_grabber::core::output::OutputChannel::new(cfg.output.clone()).unwrap();
+    let mut engine = banner_grabber::core::engine::Engine::new(cfg, sink).unwrap();
     engine.run().await.unwrap();
 }
 
+#[cfg(feature = "web")]
 #[tokio::test]
 async fn passive_mode_does_not_send_active_probe_on_timeout() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -110,8 +113,8 @@ async fn passive_mode_does_not_send_active_probe_on_timeout() {
         }
     });
 
-    let cfg = banner_grabber::model::Config {
-        target: Some(banner_grabber::model::TargetSpec {
+    let cfg = banner_grabber::core::model::Config {
+        target: Some(banner_grabber::core::model::TargetSpec {
             host: "127.0.0.1".into(),
             port: addr.port(),
         }),
@@ -123,14 +126,14 @@ async fn passive_mode_does_not_send_active_probe_on_timeout() {
         read_timeout: std::time::Duration::from_millis(300),
         overall_timeout: std::time::Duration::from_millis(700),
         max_bytes: 128,
-        mode: banner_grabber::model::ScanMode::Passive,
-        protocol: banner_grabber::model::Protocol::Http,
-        output: banner_grabber::model::OutputConfig {
-            format: banner_grabber::model::OutputFormat::Pretty,
+        mode: banner_grabber::core::model::ScanMode::Passive,
+        protocol: banner_grabber::core::model::Protocol::Http,
+        output: banner_grabber::core::model::OutputConfig {
+            format: banner_grabber::core::model::OutputFormat::Pretty,
         },
     };
 
-    let sink = banner_grabber::output::OutputChannel::new(cfg.output.clone()).unwrap();
-    let mut engine = banner_grabber::engine::Engine::new(cfg, sink).unwrap();
+    let sink = banner_grabber::core::output::OutputChannel::new(cfg.output.clone()).unwrap();
+    let mut engine = banner_grabber::core::engine::Engine::new(cfg, sink).unwrap();
     engine.run().await.unwrap();
 }

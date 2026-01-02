@@ -1,4 +1,4 @@
-use crate::model::{OutputFormat, Protocol};
+use crate::core::model::{OutputFormat, Protocol};
 use clap::{ArgAction, Parser, ValueEnum};
 use std::fmt;
 use std::time::Duration;
@@ -83,7 +83,7 @@ impl fmt::Display for Mode {
 }
 
 impl Cli {
-    pub fn into_config(self) -> anyhow::Result<crate::model::Config> {
+    pub fn into_config(self) -> anyhow::Result<crate::core::model::Config> {
         let Cli {
             host,
             port,
@@ -126,7 +126,7 @@ impl Cli {
         }
 
         let target = match (host.clone(), port, input.is_some()) {
-            (Some(h), Some(p), _) => Some(crate::model::TargetSpec { host: h, port: p }),
+            (Some(h), Some(p), _) => Some(crate::core::model::TargetSpec { host: h, port: p }),
             (Some(_), None, _) => anyhow::bail!("--host and --port must be used together"),
             (None, Some(_), false) => anyhow::bail!("--host and --port must be used together"),
             (None, Some(_), true) => None,
@@ -154,7 +154,7 @@ impl Cli {
             effective_connect_timeout_ms.saturating_add(read_timeout_ms.saturating_mul(2));
         let overall_timeout_ms = overall_timeout_ms.max(min_overall_timeout_ms);
 
-        Ok(crate::model::Config {
+        Ok(crate::core::model::Config {
             target,
             input,
             concurrency,
@@ -165,13 +165,13 @@ impl Cli {
             max_bytes: max_bytes.max(1),
             port_filter,
             mode: match mode {
-                Mode::Passive => crate::model::ScanMode::Passive,
-                Mode::Active => crate::model::ScanMode::Active,
+                Mode::Passive => crate::core::model::ScanMode::Passive,
+                Mode::Active => crate::core::model::ScanMode::Active,
             },
             protocol,
             webdriver,
             tech,
-            output: crate::model::OutputConfig {
+            output: crate::core::model::OutputConfig {
                 format: if pretty { OutputFormat::Pretty } else { output },
             },
         })

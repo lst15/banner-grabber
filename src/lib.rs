@@ -1,9 +1,5 @@
+pub mod core;
+pub mod contexts;
+
+#[cfg(feature = "cli")]
 pub mod cli;
-pub mod clients;
-pub mod engine;
-pub mod input;
-pub mod model;
-pub mod output;
-pub mod probe;
-pub mod util;
-pub mod webdriver;
