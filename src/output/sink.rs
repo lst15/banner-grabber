@@ -336,8 +336,8 @@ fn collect_weak_algorithms(kex: &SshKexInitData) -> Vec<String> {
         &kex.compression_algorithms_client_to_server,
         &kex.compression_algorithms_server_to_client,
     ] {
-        for algo in *list {
-            if weak.contains(&algo.as_str()) && !found.contains(&algo) {
+        for algo in list.iter() {
+            if weak.contains(&algo.as_str()) && !found.contains(algo) {
                 found.push(algo.clone());
             }
         }
