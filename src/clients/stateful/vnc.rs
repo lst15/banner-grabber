@@ -219,6 +219,7 @@ mod tests {
             mode: ScanMode::Active,
             protocol: crate::model::Protocol::Vnc,
             webdriver: false,
+            tech: false,
             output: OutputConfig {
                 format: OutputFormat::Pretty,
             },

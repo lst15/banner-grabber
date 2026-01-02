@@ -20,6 +20,8 @@ headless_chrome = "1.0.9"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 openssl = "0.10"
 tokio-openssl = "0.6"
+url = "2"
+wappalyzer = { git = "https://github.com/lst15/wappalyzer.git" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

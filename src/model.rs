@@ -31,6 +31,7 @@ pub struct Config {
     pub mode: ScanMode,
     pub protocol: Protocol,
     pub webdriver: bool,
+    pub tech: bool,
     pub output: OutputConfig,
 }
 
@@ -122,6 +123,8 @@ pub struct ScanOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webdriver: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub technologies: Option<TechnologyScan>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tls_info: Option<TlsInfo>,
     pub fingerprint: Fingerprint,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -163,6 +166,18 @@ pub struct TlsInfo {
 pub struct Diagnostics {
     pub stage: String,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TechnologyScan {
+    pub scan_time_seconds: f64,
+    pub list: Vec<TechnologyEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TechnologyEntry {
+    pub category: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
