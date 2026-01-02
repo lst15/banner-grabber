@@ -12,7 +12,7 @@ pub(crate) struct ClientSession {
 }
 
 impl ClientSession {
-    pub(super) fn new(cfg: &Config) -> Self {
+    pub(crate) fn new(cfg: &Config) -> Self {
         Self {
             reader: BannerReader::new(cfg.max_bytes, cfg.read_timeout),
             parts: Vec::new(),
@@ -21,7 +21,7 @@ impl ClientSession {
         }
     }
 
-    pub(super) async fn read(
+    pub(crate) async fn read(
         &mut self,
         stream: &mut TcpStream,
         delimiter: Option<&[u8]>,
@@ -32,7 +32,7 @@ impl ClientSession {
         Ok(())
     }
 
-    pub(super) async fn read_with_result(
+    pub(crate) async fn read_with_result(
         &mut self,
         stream: &mut TcpStream,
         delimiter: Option<&[u8]>,
@@ -43,7 +43,7 @@ impl ClientSession {
         Ok(res)
     }
 
-    pub(super) async fn send(
+    pub(crate) async fn send(
         &mut self,
         stream: &mut TcpStream,
         bytes: &[u8],
@@ -54,7 +54,7 @@ impl ClientSession {
             .with_context(|| "failed to write clients command")
     }
 
-    pub(super) fn append_metadata(&mut self, bytes: impl Into<Vec<u8>>) {
+    pub(crate) fn append_metadata(&mut self, bytes: impl Into<Vec<u8>>) {
         let bytes = bytes.into();
         self.parts.push(ReadResult {
             bytes,
@@ -64,7 +64,7 @@ impl ClientSession {
         });
     }
 
-    pub(super) fn finish(mut self) -> ReadResult {
+    pub(crate) fn finish(mut self) -> ReadResult {
         let mut merged = Vec::new();
         let mut reason = ReadStopReason::NotStarted;
         let mut tls_info = None;
