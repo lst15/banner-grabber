@@ -128,14 +128,14 @@ fn http_data(outcome: &ScanOutcome, proto: &str) -> Value {
 
 fn ssh_data(outcome: &ScanOutcome) -> Value {
     let banner_raw = decode_banner_raw(&outcome.banner.raw_hex).unwrap_or_default();
-    let banner = banner_raw.trim_end_matches(&['\r', '\n'][..]).to_string();
+    let (banner, product, version, os) = parse_ssh_banner(&banner_raw);
     serde_json::json!({
         "banner_raw": banner_raw,
         "banner": banner,
         "software": {
-            "product": "",
-            "version": "",
-            "os": "",
+            "product": product,
+            "version": version,
+            "os": os,
         },
         "key_exchange": [],
         "server_host_key_algorithms": [],
@@ -152,6 +152,33 @@ fn ssh_data(outcome: &ScanOutcome) -> Value {
             "ed25519": "",
         },
     })
+}
+
+fn parse_ssh_banner(banner_raw: &str) -> (String, String, String, String) {
+    let banner_line = banner_raw.lines().next().unwrap_or("").trim_end();
+    if banner_line.is_empty() {
+        return (String::new(), String::new(), String::new(), String::new());
+    }
+    let mut product = String::new();
+    let mut version = String::new();
+    let mut os = String::new();
+    if let Some(rest) = banner_line.strip_prefix("SSH-") {
+        if let Some(after_proto) = rest.splitn(2, '-').nth(1) {
+            let mut parts = after_proto.splitn(2, ' ');
+            let software_token = parts.next().unwrap_or("");
+            let comment = parts.next().unwrap_or("").trim();
+            if let Some((prod, ver)) = software_token.split_once('_') {
+                product = prod.to_string();
+                version = ver.to_string();
+            } else {
+                product = software_token.to_string();
+            }
+            if !comment.is_empty() {
+                os = comment.to_string();
+            }
+        }
+    }
+    (banner_line.to_string(), product, version, os)
 }
 
 fn decode_banner_raw(raw_hex: &str) -> Option<String> {
