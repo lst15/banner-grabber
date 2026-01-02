@@ -1,4 +1,3 @@
-use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -46,7 +45,7 @@ pub struct OutputConfig {
     pub format: OutputFormat,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, ValueEnum)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
     Ftp,
@@ -70,7 +69,7 @@ pub enum Protocol {
     Ntp,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, ValueEnum)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum OutputFormat {
     Jsonl,
     Pretty,
