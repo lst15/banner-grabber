@@ -1,0 +1,33 @@
+use crate::core::model::{Config, Target};
+use async_trait::async_trait;
+use tokio::net::TcpStream;
+
+use crate::core::clients::session::ClientSession;
+use crate::core::clients::Client;
+
+pub(crate) struct SmtpClient;
+
+#[async_trait]
+impl Client for SmtpClient {
+    fn name(&self) -> &'static str {
+        "smtp"
+    }
+
+    fn matches(&self, target: &Target) -> bool {
+        matches!(target.resolved.port(), 25 | 587)
+    }
+
+    async fn execute(
+        &self,
+        stream: &mut TcpStream,
+        cfg: &Config,
+    ) -> anyhow::Result<crate::core::engine::reader::ReadResult> {
+        let mut session = ClientSession::new(cfg);
+        session.read(stream, None).await?;
+        session.send(stream, b"EHLO banner-grabber\r\n").await?;
+        session.read(stream, None).await?;
+        session.send(stream, b"QUIT\r\n").await?;
+        session.read(stream, None).await?;
+        Ok(session.finish())
+    }
+}
