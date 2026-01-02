@@ -1,0 +1,77 @@
+%%{init: {'theme': 'default', 'themeVariables': { 'fontSize': '13px', 'fontFamily': 'monospace' }}}%%
+flowchart LR
+    classDef cliConfig fill:#d0ebff,stroke:#1976d2,color:#0d47a1;
+    classDef engine fill:#e8f5e9,stroke:#388e3c,color:#1b5e20;
+    classDef target fill:#fff8e1,stroke:#f57f17,color:#ff6f00;
+    classDef tcpFlow fill:#ffebee,stroke:#d32f2f,color:#b71c1c;
+    classDef udpFlow fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
+    classDef bannerProcess fill:#f3e5f5,stroke:#7b1fa2,color:#4a148c;
+    classDef output fill:#e0f7fa,stroke:#0097a7,color:#006064;
+    classDef contexts fill:#f1f8e9,stroke:#689f38,color:#33691e;
+
+    %% --- FASE 1: ENTRADA E CONFIG ---
+    A["main.rs<br/>(binário)"]:::cliConfig
+    A -->|CLI parse| B["cli::Cli<br/>into_config()"]:::cliConfig
+    B --> C["core::model::Config"]:::cliConfig
+
+    %% --- FASE 2: MOTOR ---
+    C --> D["Engine::new()"]:::engine
+    D --> E["Engine::run()"]:::engine
+
+    %% --- FASE 3: ALVOS + CONTROLE ---
+    E --> F["stream_targets"]:::target
+    F --> G["Target(s)<br/>(resolvidos)"]:::target
+
+    E --> H["RateLimiter +<br/>Semaphore"]:::engine
+    H --> I["spawn task per target<br/>(c/ timeout global)"]:::engine
+
+    %% --- FASE 4: PROCESSAMENTO POR ALVO ---
+    I --> J["process_target"]:::engine
+    J --> K{"UDP client<br/>disponível?"}:::udpFlow
+
+    %% --- CAMINHO UDP ---
+    K -->|Sim| L["udp_client.execute"]:::udpFlow
+    L --> M["ScanOutcome (UDP)"]:::udpFlow
+
+    %% --- CAMINHO TCP ---
+    K -->|Não| N["connect_tcp"]:::tcpFlow
+    N --> O{"TCP ok?"}:::tcpFlow
+    O -->|Erro/timeout| P["ScanOutcome<br/>erro/timeout"]:::tcpFlow
+    O -->|Ok| Q["process_tcp_stream"]:::tcpFlow
+
+    Q --> R{"Client<br/>ativo?"}:::bannerProcess
+    R -->|Sim| S["Client.execute"]:::bannerProcess
+    R -->|Não| T{"Prober<br/>ativo?"}:::bannerProcess
+    T -->|Sim| U["Prober.execute"]:::bannerProcess
+    T -->|Não| V["BannerReader.read"]:::bannerProcess
+
+    S --> W["ReadResult"]:::bannerProcess
+    U --> W
+    V --> W
+    W --> X["BannerReader.render → Banner"]:::bannerProcess
+    X --> Y["Fingerprint + TLS + Diagnostics"]:::bannerProcess
+
+    Y --> Z{"WebDriver/<br/>Tech?"}:::bannerProcess
+    Z -->|Sim| AA["web::webdriver +<br/>wappalyzer"]:::bannerProcess
+    Z -->|Não| AB["sem extras"]:::bannerProcess
+
+    %% --- SAÍDA ---
+    M --> AC["OutputChannel.emit"]:::output
+    P --> AC
+    Y --> AC
+    AA --> AC
+    AB --> AC
+    AC --> AD["OutputSink.write_outcome"]:::output
+    AD --> AE["stdout<br/>(JSONL/Pretty)"]:::output
+
+    %% --- CONTEXTO (usado em process_target) ---
+    subgraph Contexts ["Contexts (registry)"]
+        class Contexts contexts
+        CR["contexts::registry<br/>client_for_target /<br/>udp_client_for_target /<br/>probe_for_target"]:::contexts
+        CR --> C1["db"]
+        CR --> C2["mail"]
+        CR --> C3["infra"]
+        CR --> C4["web"]
+    end
+
+    J --> CR
