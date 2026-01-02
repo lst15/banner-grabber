@@ -87,6 +87,16 @@ fn http_data(outcome: &ScanOutcome, proto: &str) -> Value {
     } else {
         TlsInfo::default()
     };
+    let technologies = outcome
+        .technologies
+        .as_ref()
+        .map(|scan| {
+            serde_json::json!({
+                "scan_time_seconds": scan.scan_time_seconds,
+                "list": &scan.list,
+            })
+        })
+        .unwrap_or_else(|| serde_json::json!(""));
     let location = find_header_value(&headers, "Location");
     let redirect_entry = location
         .as_deref()
@@ -102,7 +112,7 @@ fn http_data(outcome: &ScanOutcome, proto: &str) -> Value {
         "engine_body": engine_body,
         "title": title,
         "favicon_hash": "",
-        "technologies": "",
+        "technologies": technologies,
         "redirects": [
             redirect_entry
         ],

@@ -93,6 +93,13 @@ impl TargetProcessor for DefaultProcessor {
         } else {
             (None, None)
         };
+        let technologies = if config.tech
+            && matches!(config.protocol, Protocol::Http | Protocol::Https)
+        {
+            scan_technologies(&target, &config.protocol).await
+        } else {
+            None
+        };
         let total = now_millis() - start;
         debug!(target = %target.resolved, ms = total, "processed target");
 
@@ -104,6 +111,7 @@ impl TargetProcessor for DefaultProcessor {
             timestamp: now_iso8601(),
             ttl: None,
             webdriver: webdriver_body,
+            technologies,
             tls_info,
             fingerprint,
             diagnostics,
@@ -164,6 +172,7 @@ async fn attempt_udp_scan(
             timestamp: now_iso8601(),
             ttl: None,
             webdriver: None,
+            technologies: None,
             tls_info,
             fingerprint,
             diagnostics: None,
@@ -332,6 +341,7 @@ mod tests {
             mode,
             protocol: Protocol::Http,
             webdriver: false,
+            tech: false,
             output: OutputConfig {
                 format: OutputFormat::Jsonl,
             },
@@ -396,8 +406,42 @@ fn build_outcome_with_context(
         timestamp: now_iso8601(),
         ttl: None,
         webdriver: None,
+        technologies: None,
         tls_info: None,
         fingerprint,
         diagnostics,
     }
+}
+
+async fn scan_technologies(
+    target: &crate::model::Target,
+    protocol: &Protocol,
+) -> Option<crate::model::TechnologyScan> {
+    let url = format!(
+        "{}://{}:{}",
+        protocol,
+        target.original.host,
+        target.original.port
+    );
+    let parsed = url::Url::parse(&url).ok()?;
+    let analysis = wappalyzer::scan(parsed, Some(true)).await;
+    let scan_time_seconds = analysis
+        .scan_time
+        .map(|time| time.as_secs_f64())
+        .unwrap_or_default();
+    let mut list: Vec<crate::model::TechnologyEntry> = match analysis.result {
+        Ok(techs) => techs
+            .into_iter()
+            .map(|tech| crate::model::TechnologyEntry {
+                category: tech.category,
+                name: tech.name,
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    list.sort_by(|a, b| a.category.cmp(&b.category).then_with(|| a.name.cmp(&b.name)));
+    Some(crate::model::TechnologyScan {
+        scan_time_seconds,
+        list,
+    })
 }

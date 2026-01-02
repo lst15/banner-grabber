@@ -61,6 +61,10 @@ pub struct Cli {
     /// Use a headless browser (requires --protocol http or https)
     #[arg(long = "webdriver", action = ArgAction::SetTrue)]
     pub webdriver: bool,
+
+    /// Detect web technologies (requires --protocol http or https)
+    #[arg(long = "tech", action = ArgAction::SetTrue)]
+    pub tech: bool,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -95,6 +99,7 @@ impl Cli {
             pretty,
             protocol,
             webdriver,
+            tech,
         } = self;
 
         if host.is_none() && input.is_none() {
@@ -114,6 +119,7 @@ impl Cli {
         }
 
         let webdriver = webdriver && matches!(protocol, Protocol::Http | Protocol::Https);
+        let tech = tech && matches!(protocol, Protocol::Http | Protocol::Https);
 
         if input.is_some() && port.is_none() {
             anyhow::bail!("--port is required when using --input");
@@ -164,6 +170,7 @@ impl Cli {
             },
             protocol,
             webdriver,
+            tech,
             output: crate::model::OutputConfig {
                 format: if pretty { OutputFormat::Pretty } else { output },
             },
@@ -192,6 +199,7 @@ mod tests {
             pretty: false,
             protocol: Protocol::Ftp,
             webdriver: false,
+            tech: false,
         };
 
         let cfg = cli.into_config().expect("config should build");
@@ -215,6 +223,7 @@ mod tests {
             pretty: false,
             protocol: Protocol::Https,
             webdriver: false,
+            tech: false,
         };
 
         let cfg = cli.into_config().expect("config should build");
@@ -239,6 +248,7 @@ mod tests {
             pretty: false,
             protocol: Protocol::Ftp,
             webdriver: true,
+            tech: false,
         };
 
         let err = cli.into_config().unwrap_err();
