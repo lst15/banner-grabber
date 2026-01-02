@@ -35,6 +35,8 @@ impl OutputSink {
                     http_data(&outcome, proto)
                 } else if proto == "ssh" {
                     ssh_data(&outcome)
+                } else if proto == "imap" {
+                    imap_data(&outcome)
                 } else {
                     serde_json::json!(raw_banner_for_data(&outcome))
                 };
@@ -166,6 +168,53 @@ fn ssh_data(outcome: &ScanOutcome) -> Value {
     })
 }
 
+fn imap_data(outcome: &ScanOutcome) -> Value {
+    let printable = if !outcome.banner.printable.is_empty() {
+        outcome.banner.printable.clone()
+    } else {
+        decode_banner_raw(&outcome.banner.raw_hex).unwrap_or_default()
+    };
+    let lines: Vec<&str> = printable.lines().collect();
+    let banner_line = lines
+        .iter()
+        .find(|line| !line.trim().is_empty())
+        .copied()
+        .unwrap_or_default();
+    let banner = banner_line.trim().to_string();
+    let server_identity = parse_imap_server_identity(&banner);
+    let (server_software, software_version) = parse_imap_software(&server_identity);
+    let capabilities = collect_imap_capabilities(&lines);
+    let auth_mechanisms = capabilities
+        .iter()
+        .filter_map(|cap| cap.strip_prefix("AUTH="))
+        .map(|value| value.to_string())
+        .collect::<Vec<String>>();
+    let supports_starttls = capabilities
+        .iter()
+        .any(|cap| cap.eq_ignore_ascii_case("STARTTLS"));
+    let requires_auth_before_capability =
+        imap_requires_auth_for_capability(&lines, "a001");
+    let weak_auth = auth_mechanisms.iter().any(|mech| {
+        mech.eq_ignore_ascii_case("LOGIN") || mech.eq_ignore_ascii_case("PLAIN")
+    });
+    let errors_observed = collect_imap_errors(&lines);
+    serde_json::json!({
+        "banner": banner,
+        "server_software": server_software,
+        "software_version": software_version,
+        "capabilities": {
+            "pre_login": capabilities,
+            "post_login": [],
+        },
+        "auth_mechanisms": auth_mechanisms,
+        "supports_starttls": supports_starttls,
+        "requires_auth_before_capability": requires_auth_before_capability,
+        "server_identity": server_identity,
+        "weak_auth": weak_auth,
+        "errors_observed": errors_observed,
+    })
+}
+
 fn raw_banner_for_data(outcome: &ScanOutcome) -> String {
     if !outcome.banner.printable.is_empty() {
         return outcome.banner.printable.clone();
@@ -180,6 +229,129 @@ fn decode_banner_raw(raw_hex: &str) -> Option<String> {
 
 fn decode_banner_raw_bytes(raw_hex: &str) -> Option<Vec<u8>> {
     crate::util::hex::from_hex(raw_hex).ok()
+}
+
+fn parse_imap_server_identity(banner: &str) -> String {
+    if let Some(idx) = banner.find(']') {
+        return banner[idx + 1..].trim().to_string();
+    }
+    let trimmed = banner.trim();
+    for prefix in ["* OK", "* PREAUTH", "* BYE"] {
+        if trimmed.to_ascii_uppercase().starts_with(prefix) {
+            return trimmed[prefix.len()..].trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn parse_imap_software(identity: &str) -> (String, Option<String>) {
+    let mut parts = identity.split_whitespace();
+    let first = parts.next().unwrap_or("").trim();
+    if first.is_empty() {
+        return (String::new(), None);
+    }
+    let (product, version) = if let Some((prod, ver)) = split_imap_product_version(first) {
+        (prod.to_string(), Some(ver.to_string()))
+    } else if let Some(next) = parts.next() {
+        let candidate = next.trim();
+        if candidate.starts_with(|ch: char| ch.is_ascii_digit())
+            || (candidate.len() > 1
+                && candidate.starts_with('v')
+                && candidate[1..].starts_with(|ch: char| ch.is_ascii_digit()))
+        {
+            (first.to_string(), Some(candidate.trim_start_matches('v').to_string()))
+        } else {
+            (first.to_string(), None)
+        }
+    } else {
+        (first.to_string(), None)
+    };
+    (product, version)
+}
+
+fn split_imap_product_version(token: &str) -> Option<(&str, &str)> {
+    if let Some((prod, ver)) = token.split_once('/') {
+        if !prod.is_empty() && !ver.is_empty() {
+            return Some((prod, ver));
+        }
+    }
+    if let Some((prod, ver)) = token.split_once('-') {
+        if !prod.is_empty() && !ver.is_empty() {
+            return Some((prod, ver));
+        }
+    }
+    None
+}
+
+fn collect_imap_capabilities(lines: &[&str]) -> Vec<String> {
+    let mut caps = Vec::new();
+    for line in lines {
+        for cap in extract_imap_capabilities(line) {
+            if !caps.iter().any(|existing| existing == &cap) {
+                caps.push(cap);
+            }
+        }
+    }
+    caps
+}
+
+fn extract_imap_capabilities(line: &str) -> Vec<String> {
+    let trimmed = line.trim();
+    let upper = trimmed.to_ascii_uppercase();
+    if let Some(idx) = upper.find("[CAPABILITY") {
+        let after = &trimmed[idx + "[CAPABILITY".len()..];
+        let end = after.find(']').unwrap_or(after.len());
+        return parse_imap_capability_list(&after[..end]);
+    }
+    if upper.starts_with("* CAPABILITY") {
+        let after = &trimmed["* CAPABILITY".len()..];
+        return parse_imap_capability_list(after);
+    }
+    Vec::new()
+}
+
+fn parse_imap_capability_list(payload: &str) -> Vec<String> {
+    payload
+        .split_whitespace()
+        .filter_map(|token| {
+            let cleaned = token.trim_matches(']');
+            if cleaned.is_empty() {
+                None
+            } else {
+                Some(cleaned.to_string())
+            }
+        })
+        .collect()
+}
+
+fn imap_requires_auth_for_capability(lines: &[&str], tag: &str) -> bool {
+    lines.iter().any(|line| {
+        let trimmed = line.trim();
+        if !trimmed.to_ascii_lowercase().starts_with(&tag.to_ascii_lowercase()) {
+            return false;
+        }
+        let mut parts = trimmed.split_whitespace();
+        let _ = parts.next();
+        let status = parts.next().unwrap_or("");
+        status.eq_ignore_ascii_case("NO") || status.eq_ignore_ascii_case("BAD")
+    })
+}
+
+fn collect_imap_errors(lines: &[&str]) -> Vec<String> {
+    let mut errors = Vec::new();
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let mut parts = trimmed.split_whitespace();
+        let _tag = parts.next().unwrap_or("");
+        let status = parts.next().unwrap_or("");
+        if status.eq_ignore_ascii_case("BAD") || status.eq_ignore_ascii_case("NO") {
+            errors.push(trimmed.to_string());
+        }
+    }
+    errors
 }
 
 #[derive(Default)]
