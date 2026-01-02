@@ -103,10 +103,7 @@ fn http_data(outcome: &ScanOutcome, proto: &str) -> Value {
         .map(|url| serde_json::json!({ "url": url, "status": status_reqwest }))
         .unwrap_or_else(|| serde_json::json!({ "url": "", "status": "" }));
     serde_json::json!({
-        "status_code": {
-            "engine": "",
-            "reqwest": status_reqwest,
-        },
+        "status_code": status_reqwest,
         "headers": headers,
         "body": body,
         "engine_body": engine_body,
