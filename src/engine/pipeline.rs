@@ -93,13 +93,12 @@ impl TargetProcessor for DefaultProcessor {
         } else {
             (None, None)
         };
-        let technologies = if config.tech
-            && matches!(config.protocol, Protocol::Http | Protocol::Https)
-        {
-            scan_technologies(&target, &config.protocol).await
-        } else {
-            None
-        };
+        let technologies =
+            if config.tech && matches!(config.protocol, Protocol::Http | Protocol::Https) {
+                scan_technologies(&target, &config.protocol).await
+            } else {
+                None
+            };
         let total = now_millis() - start;
         debug!(target = %target.resolved, ms = total, "processed target");
 
@@ -419,9 +418,7 @@ async fn scan_technologies(
 ) -> Option<crate::model::TechnologyScan> {
     let url = format!(
         "{}://{}:{}",
-        protocol,
-        target.original.host,
-        target.original.port
+        protocol, target.original.host, target.original.port
     );
     let parsed = url::Url::parse(&url).ok()?;
     let analysis = wappalyzer::scan(parsed, Some(true)).await;
@@ -439,7 +436,11 @@ async fn scan_technologies(
             .collect(),
         Err(_) => Vec::new(),
     };
-    list.sort_by(|a, b| a.category.cmp(&b.category).then_with(|| a.name.cmp(&b.name)));
+    list.sort_by(|a, b| {
+        a.category
+            .cmp(&b.category)
+            .then_with(|| a.name.cmp(&b.name))
+    });
     Some(crate::model::TechnologyScan {
         scan_time_seconds,
         list,
