@@ -428,6 +428,7 @@ fn decode_banner_raw_bytes(raw_hex: &str) -> Option<Vec<u8>> {
     crate::util::hex::from_hex(raw_hex).ok()
 }
 
+#[derive(Clone)]
 struct MysqlHandshakeInfo {
     protocol_version: Option<u8>,
     server_version: String,
@@ -441,45 +442,88 @@ struct MysqlHandshakeInfo {
 
 fn parse_mysql_handshake(raw_bytes: &[u8]) -> Option<MysqlHandshakeInfo> {
     let payload = mysql_payload_bytes(raw_bytes);
+    let payload_info = parse_mysql_handshake_payload(payload);
+    let raw_info = parse_mysql_handshake_payload(raw_bytes);
+    match (payload_info, raw_info) {
+        (Some(payload_info), Some(raw_info)) => {
+            if mysql_handshake_score(&raw_info) > mysql_handshake_score(&payload_info) {
+                Some(raw_info)
+            } else {
+                Some(payload_info)
+            }
+        }
+        (Some(payload_info), None) => Some(payload_info),
+        (None, Some(raw_info)) => Some(raw_info),
+        (None, None) => None,
+    }
+}
+
+fn parse_mysql_handshake_payload(payload: &[u8]) -> Option<MysqlHandshakeInfo> {
+    if payload.is_empty() {
+        return None;
+    }
     let mut idx = 0;
-
     let protocol_version = payload.get(idx).copied();
-    idx += 1;
+    idx = idx.saturating_add(1);
 
-    let (server_version, next_idx) = read_cstring(payload, idx)?;
+    let (server_version, next_idx, cstring_found) = read_cstring_lossy(payload, idx);
     idx = next_idx;
 
-    let thread_id = read_u32_le(payload, idx)?;
+    let mut info = MysqlHandshakeInfo {
+        protocol_version,
+        server_version,
+        thread_id: None,
+        auth_plugin: None,
+        salt_hex: String::new(),
+        capabilities: 0,
+        status_flags: None,
+        charset: None,
+    };
+
+    if !cstring_found || payload.len() < idx + 4 {
+        return Some(info);
+    }
+
+    info.thread_id = read_u32_le(payload, idx);
     idx += 4;
 
-    let auth_part1 = payload.get(idx..idx + 8)?.to_vec();
+    if payload.len() < idx + 8 {
+        return Some(info);
+    }
+
+    let mut auth_data = payload[idx..idx + 8].to_vec();
     idx += 8;
 
+    if payload.len() < idx + 1 {
+        info.salt_hex = to_hex_compact(&auth_data);
+        return Some(info);
+    }
     idx += 1;
 
-    let capability_lower = read_u16_le(payload, idx)?;
+    if payload.len() < idx + 2 {
+        info.salt_hex = to_hex_compact(&auth_data);
+        return Some(info);
+    }
+    let capability_lower = read_u16_le(payload, idx).unwrap_or_default();
     idx += 2;
 
-    let mut charset = None;
-    let mut status_flags = None;
-    let mut capability_upper = 0u16;
-    let mut auth_plugin_data_len = 0u8;
-
     if payload.len() >= idx + 1 {
-        charset = Some(payload[idx]);
+        info.charset = Some(payload[idx]);
         idx += 1;
     }
 
     if payload.len() >= idx + 2 {
-        status_flags = Some(read_u16_le(payload, idx)?);
+        info.status_flags = read_u16_le(payload, idx);
         idx += 2;
     }
 
+    let mut capability_upper = 0u16;
     if payload.len() >= idx + 2 {
-        capability_upper = read_u16_le(payload, idx)?;
+        capability_upper = read_u16_le(payload, idx).unwrap_or_default();
         idx += 2;
     }
 
+    let mut auth_plugin_data_len = 0u8;
     if payload.len() >= idx + 1 {
         auth_plugin_data_len = payload[idx];
         idx += 1;
@@ -489,8 +533,7 @@ fn parse_mysql_handshake(raw_bytes: &[u8]) -> Option<MysqlHandshakeInfo> {
         idx += 10;
     }
 
-    let capabilities = (capability_upper as u32) << 16 | capability_lower as u32;
-    let mut auth_data = auth_part1;
+    info.capabilities = (capability_upper as u32) << 16 | capability_lower as u32;
 
     if idx < payload.len() {
         let part2_len = if auth_plugin_data_len > 0 {
@@ -498,7 +541,7 @@ fn parse_mysql_handshake(raw_bytes: &[u8]) -> Option<MysqlHandshakeInfo> {
         } else {
             13
         };
-        let remaining = payload.len() - idx;
+        let remaining = payload.len().saturating_sub(idx);
         let actual_len = part2_len.min(remaining);
         auth_data.extend_from_slice(&payload[idx..idx + actual_len]);
         idx += actual_len;
@@ -507,22 +550,15 @@ fn parse_mysql_handshake(raw_bytes: &[u8]) -> Option<MysqlHandshakeInfo> {
         }
     }
 
-    let auth_plugin = if capabilities & CLIENT_PLUGIN_AUTH != 0 && idx < payload.len() {
-        read_cstring(payload, idx).map(|(name, _)| name)
-    } else {
-        None
-    };
+    if info.capabilities & CLIENT_PLUGIN_AUTH != 0 && idx < payload.len() {
+        let (plugin, _, _) = read_cstring_lossy(payload, idx);
+        if !plugin.is_empty() {
+            info.auth_plugin = Some(plugin);
+        }
+    }
 
-    Some(MysqlHandshakeInfo {
-        protocol_version,
-        server_version,
-        thread_id: Some(thread_id),
-        auth_plugin,
-        salt_hex: to_hex_compact(&auth_data),
-        capabilities,
-        status_flags,
-        charset,
-    })
+    info.salt_hex = to_hex_compact(&auth_data);
+    Some(info)
 }
 
 fn mysql_payload_bytes(raw_bytes: &[u8]) -> &[u8] {
@@ -542,6 +578,22 @@ fn read_cstring(bytes: &[u8], start: usize) -> Option<(String, usize)> {
     let end = start + offset;
     let value = String::from_utf8_lossy(&bytes[start..end]).to_string();
     Some((value, end + 1))
+}
+
+fn read_cstring_lossy(bytes: &[u8], start: usize) -> (String, usize, bool) {
+    if start >= bytes.len() {
+        return (String::new(), start, false);
+    }
+    if let Some(offset) = bytes
+        .get(start..)
+        .and_then(|slice| slice.iter().position(|b| *b == 0))
+    {
+        let end = start + offset;
+        let value = String::from_utf8_lossy(&bytes[start..end]).to_string();
+        return (value, end + 1, true);
+    }
+    let value = String::from_utf8_lossy(&bytes[start..]).to_string();
+    (value, bytes.len(), false)
 }
 
 fn read_u16_le(bytes: &[u8], start: usize) -> Option<u16> {
@@ -579,6 +631,29 @@ fn parse_mysql_version_detail(version: &str) -> (Option<u64>, Option<u64>, Optio
     let patch = iter.next().and_then(|v| v.parse::<u64>().ok());
 
     (major, minor, patch, suffix)
+}
+
+fn mysql_handshake_score(info: &MysqlHandshakeInfo) -> usize {
+    let mut score = 0;
+    if info.protocol_version.is_some() {
+        score += 1;
+    }
+    if !info.server_version.is_empty() {
+        score += 1;
+    }
+    if info.thread_id.is_some() {
+        score += 1;
+    }
+    if !info.salt_hex.is_empty() {
+        score += 1;
+    }
+    if info.auth_plugin.is_some() {
+        score += 1;
+    }
+    if info.capabilities != 0 {
+        score += 1;
+    }
+    score
 }
 
 fn mysql_capabilities_json(capabilities: u32) -> Value {
