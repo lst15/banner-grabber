@@ -10,7 +10,7 @@ pub(crate) struct MssqlClient;
 #[async_trait]
 impl Client for MssqlClient {
     fn name(&self) -> &'static str {
-        "mssql"
+        "ms-sql-s"
     }
 
     fn matches(&self, target: &Target) -> bool {
@@ -45,7 +45,10 @@ impl Client for MssqlClient {
         packet.extend_from_slice(&payload);
 
         session.send(stream, &packet).await?;
-        session.read(stream, None).await?;
+        let response = session.read_with_result(stream, None).await?;
+        let response_hex = crate::util::hex::to_hex(&response.bytes);
+        let metadata = format!("mssql.prelogin_hex={response_hex}");
+        session.append_metadata(metadata);
         Ok(session.finish())
     }
 }
