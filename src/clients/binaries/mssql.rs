@@ -45,10 +45,7 @@ impl Client for MssqlClient {
         packet.extend_from_slice(&payload);
 
         session.send(stream, &packet).await?;
-        let response = session.read_with_result(stream, None).await?;
-        let response_hex = crate::util::hex::to_hex(&response.bytes);
-        let metadata = format!("mssql.prelogin_hex={response_hex}");
-        session.append_metadata(metadata);
+        session.read_with_result(stream, None).await?;
         Ok(session.finish())
     }
 }
