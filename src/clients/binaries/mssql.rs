@@ -41,7 +41,9 @@ impl Client for MssqlClient {
         let mut packet = Vec::new();
         packet.extend_from_slice(&[0x12, 0x01]);
         packet.extend_from_slice(&total_len.to_be_bytes());
-        packet.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00]);
+        packet.extend_from_slice(&[0x00, 0x00]);
+        packet.push(0x00);
+        packet.push(0x00);
         packet.extend_from_slice(&payload);
 
         session.send(stream, &packet).await?;
