@@ -10,7 +10,7 @@ pub(crate) struct MssqlClient;
 #[async_trait]
 impl Client for MssqlClient {
     fn name(&self) -> &'static str {
-        "mssql"
+        "ms-sql-s"
     }
 
     fn matches(&self, target: &Target) -> bool {
@@ -41,11 +41,13 @@ impl Client for MssqlClient {
         let mut packet = Vec::new();
         packet.extend_from_slice(&[0x12, 0x01]);
         packet.extend_from_slice(&total_len.to_be_bytes());
-        packet.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00]);
+        packet.extend_from_slice(&[0x00, 0x00]);
+        packet.push(0x00);
+        packet.push(0x00);
         packet.extend_from_slice(&payload);
 
         session.send(stream, &packet).await?;
-        session.read(stream, None).await?;
+        session.read_with_result(stream, None).await?;
         Ok(session.finish())
     }
 }
