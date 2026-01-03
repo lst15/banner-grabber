@@ -37,6 +37,8 @@ impl OutputSink {
                     imap_data(&outcome)
                 } else if matches!(proto, "mssql" | "ms-sql-s") {
                     mssql_data(&outcome)
+                } else if proto == "mysql" {
+                    mysql_data(&outcome)
                 } else if proto == "ssh" {
                     ssh_data(&outcome)
                 } else {
@@ -264,6 +266,79 @@ fn mssql_data(outcome: &ScanOutcome) -> Value {
     })
 }
 
+fn mysql_data(outcome: &ScanOutcome) -> Value {
+    let raw_bytes = decode_banner_raw_bytes(&outcome.banner.raw_hex).unwrap_or_default();
+    let parsed = parse_mysql_handshake(&raw_bytes);
+    let default_value = Value::Null;
+    let (protocol_version, server_version, thread_id, auth_plugin, salt, charset, caps, status) =
+        if let Some(info) = parsed {
+            (
+                info.protocol_version
+                    .map(Value::from)
+                    .unwrap_or(default_value.clone()),
+                Value::String(info.server_version),
+                info.thread_id
+                    .map(Value::from)
+                    .unwrap_or(default_value.clone()),
+                info.auth_plugin
+                    .map(Value::String)
+                    .unwrap_or(default_value.clone()),
+                Value::String(info.salt_hex),
+                info.charset
+                    .map(Value::from)
+                    .unwrap_or(default_value.clone()),
+                info.capabilities,
+                info.status_flags,
+            )
+        } else {
+            (
+                default_value.clone(),
+                Value::String(String::new()),
+                default_value.clone(),
+                default_value.clone(),
+                Value::String(String::new()),
+                default_value.clone(),
+                0,
+                None,
+            )
+        };
+
+    let (major, minor, patch, suffix) =
+        parse_mysql_version_detail(server_version.as_str().unwrap_or_default());
+    let status_bits = status.unwrap_or(0);
+    let server_capabilities = mysql_capabilities_json(caps);
+    let allows_local_infile = server_capabilities["local_files"]
+        .as_bool()
+        .unwrap_or(false);
+    let weak_auth = matches!(auth_plugin.as_str(), Some("mysql_old_password"));
+
+    serde_json::json!({
+        "protocol_version": protocol_version,
+        "server_version": server_version,
+        "server_type": "MySQL",
+        "version_detail": {
+            "major": major,
+            "minor": minor,
+            "patch": patch,
+            "suffix": suffix,
+        },
+        "thread_id": thread_id,
+        "auth_plugin": auth_plugin,
+        "salt": salt,
+        "server_capabilities": server_capabilities,
+        "status_flags": {
+            "server_status_in_trans": status_bits & 0x0001 != 0,
+            "server_status_autocommit": status_bits & 0x0002 != 0,
+            "more_results_exists": status_bits & 0x0008 != 0,
+            "server_more_results_exists": status_bits & 0x0008 != 0,
+        },
+        "charset": charset,
+        "ssl_required": false,
+        "weak_auth": weak_auth,
+        "allows_local_infile": allows_local_infile,
+    })
+}
+
 fn extract_imap_greeting_capabilities(line: &str) -> Option<Vec<String>> {
     let start = line.find("[CAPABILITY ")?;
     let value_start = start + "[CAPABILITY ".len();
@@ -352,6 +427,290 @@ fn decode_banner_raw(raw_hex: &str) -> Option<String> {
 fn decode_banner_raw_bytes(raw_hex: &str) -> Option<Vec<u8>> {
     crate::util::hex::from_hex(raw_hex).ok()
 }
+
+#[derive(Clone)]
+struct MysqlHandshakeInfo {
+    protocol_version: Option<u8>,
+    server_version: String,
+    thread_id: Option<u32>,
+    auth_plugin: Option<String>,
+    salt_hex: String,
+    capabilities: u32,
+    status_flags: Option<u16>,
+    charset: Option<u8>,
+}
+
+fn parse_mysql_handshake(raw_bytes: &[u8]) -> Option<MysqlHandshakeInfo> {
+    let payload = mysql_payload_bytes(raw_bytes);
+    let payload_info = parse_mysql_handshake_payload(payload);
+    let raw_info = parse_mysql_handshake_payload(raw_bytes);
+    match (payload_info, raw_info) {
+        (Some(payload_info), Some(raw_info)) => {
+            if mysql_handshake_score(&raw_info) > mysql_handshake_score(&payload_info) {
+                Some(raw_info)
+            } else {
+                Some(payload_info)
+            }
+        }
+        (Some(payload_info), None) => Some(payload_info),
+        (None, Some(raw_info)) => Some(raw_info),
+        (None, None) => None,
+    }
+}
+
+fn parse_mysql_handshake_payload(payload: &[u8]) -> Option<MysqlHandshakeInfo> {
+    if payload.is_empty() {
+        return None;
+    }
+    let mut idx = 0;
+    let protocol_version = payload.get(idx).copied();
+    idx = idx.saturating_add(1);
+
+    let (server_version, next_idx, cstring_found) = read_cstring_lossy(payload, idx);
+    idx = next_idx;
+
+    let mut info = MysqlHandshakeInfo {
+        protocol_version,
+        server_version,
+        thread_id: None,
+        auth_plugin: None,
+        salt_hex: String::new(),
+        capabilities: 0,
+        status_flags: None,
+        charset: None,
+    };
+
+    if !cstring_found || payload.len() < idx + 4 {
+        return Some(info);
+    }
+
+    info.thread_id = read_u32_le(payload, idx);
+    idx += 4;
+
+    if payload.len() < idx + 8 {
+        return Some(info);
+    }
+
+    let mut auth_data = payload[idx..idx + 8].to_vec();
+    idx += 8;
+
+    if payload.len() < idx + 1 {
+        info.salt_hex = to_hex_compact(&auth_data);
+        return Some(info);
+    }
+    idx += 1;
+
+    if payload.len() < idx + 2 {
+        info.salt_hex = to_hex_compact(&auth_data);
+        return Some(info);
+    }
+    let capability_lower = read_u16_le(payload, idx).unwrap_or_default();
+    idx += 2;
+
+    if payload.len() >= idx + 1 {
+        info.charset = Some(payload[idx]);
+        idx += 1;
+    }
+
+    if payload.len() >= idx + 2 {
+        info.status_flags = read_u16_le(payload, idx);
+        idx += 2;
+    }
+
+    let mut capability_upper = 0u16;
+    if payload.len() >= idx + 2 {
+        capability_upper = read_u16_le(payload, idx).unwrap_or_default();
+        idx += 2;
+    }
+
+    let mut auth_plugin_data_len = 0u8;
+    if payload.len() >= idx + 1 {
+        auth_plugin_data_len = payload[idx];
+        idx += 1;
+    }
+
+    if payload.len() >= idx + 10 {
+        idx += 10;
+    }
+
+    info.capabilities = (capability_upper as u32) << 16 | capability_lower as u32;
+
+    if idx < payload.len() {
+        let part2_len = if auth_plugin_data_len > 0 {
+            usize::from(auth_plugin_data_len).saturating_sub(8).max(13)
+        } else {
+            13
+        };
+        let remaining = payload.len().saturating_sub(idx);
+        let actual_len = part2_len.min(remaining);
+        auth_data.extend_from_slice(&payload[idx..idx + actual_len]);
+        idx += actual_len;
+        if payload.get(idx) == Some(&0x00) {
+            idx += 1;
+        }
+    }
+
+    if info.capabilities & CLIENT_PLUGIN_AUTH != 0 && idx < payload.len() {
+        let (plugin, _, _) = read_cstring_lossy(payload, idx);
+        if !plugin.is_empty() {
+            info.auth_plugin = Some(plugin);
+        }
+    }
+
+    info.salt_hex = to_hex_compact(&auth_data);
+    Some(info)
+}
+
+fn mysql_payload_bytes(raw_bytes: &[u8]) -> &[u8] {
+    if raw_bytes.len() >= 4 {
+        let length = raw_bytes[0] as usize
+            | ((raw_bytes[1] as usize) << 8)
+            | ((raw_bytes[2] as usize) << 16);
+        if length > 0 && raw_bytes.len() >= length + 4 {
+            return &raw_bytes[4..4 + length];
+        }
+    }
+    raw_bytes
+}
+
+fn read_cstring(bytes: &[u8], start: usize) -> Option<(String, usize)> {
+    let offset = bytes.get(start..)?.iter().position(|b| *b == 0)?;
+    let end = start + offset;
+    let value = String::from_utf8_lossy(&bytes[start..end]).to_string();
+    Some((value, end + 1))
+}
+
+fn read_cstring_lossy(bytes: &[u8], start: usize) -> (String, usize, bool) {
+    if start >= bytes.len() {
+        return (String::new(), start, false);
+    }
+    if let Some(offset) = bytes
+        .get(start..)
+        .and_then(|slice| slice.iter().position(|b| *b == 0))
+    {
+        let end = start + offset;
+        let value = String::from_utf8_lossy(&bytes[start..end]).to_string();
+        return (value, end + 1, true);
+    }
+    let value = String::from_utf8_lossy(&bytes[start..]).to_string();
+    (value, bytes.len(), false)
+}
+
+fn read_u16_le(bytes: &[u8], start: usize) -> Option<u16> {
+    let slice = bytes.get(start..start + 2)?;
+    Some(u16::from_le_bytes([slice[0], slice[1]]))
+}
+
+fn read_u32_le(bytes: &[u8], start: usize) -> Option<u32> {
+    let slice = bytes.get(start..start + 4)?;
+    Some(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
+}
+
+fn to_hex_compact(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>()
+}
+
+fn parse_mysql_version_detail(version: &str) -> (Option<u64>, Option<u64>, Option<u64>, String) {
+    let mut suffix = String::new();
+    let mut cutoff = version.len();
+    for (idx, ch) in version.char_indices() {
+        if !ch.is_ascii_digit() && ch != '.' {
+            cutoff = idx;
+            suffix = version[idx..].to_string();
+            break;
+        }
+    }
+
+    let numeric = &version[..cutoff];
+    let mut iter = numeric.split('.');
+    let major = iter.next().and_then(|v| v.parse::<u64>().ok());
+    let minor = iter.next().and_then(|v| v.parse::<u64>().ok());
+    let patch = iter.next().and_then(|v| v.parse::<u64>().ok());
+
+    (major, minor, patch, suffix)
+}
+
+fn mysql_handshake_score(info: &MysqlHandshakeInfo) -> usize {
+    let mut score = 0;
+    if info.protocol_version.is_some() {
+        score += 1;
+    }
+    if !info.server_version.is_empty() {
+        score += 1;
+    }
+    if info.thread_id.is_some() {
+        score += 1;
+    }
+    if !info.salt_hex.is_empty() {
+        score += 1;
+    }
+    if info.auth_plugin.is_some() {
+        score += 1;
+    }
+    if info.capabilities != 0 {
+        score += 1;
+    }
+    score
+}
+
+fn mysql_capabilities_json(capabilities: u32) -> Value {
+    serde_json::json!({
+        "long_password": capabilities & CLIENT_LONG_PASSWORD != 0,
+        "found_rows": capabilities & CLIENT_FOUND_ROWS != 0,
+        "long_flag": capabilities & CLIENT_LONG_FLAG != 0,
+        "connect_with_db": capabilities & CLIENT_CONNECT_WITH_DB != 0,
+        "no_schema": capabilities & CLIENT_NO_SCHEMA != 0,
+        "compress": capabilities & CLIENT_COMPRESS != 0,
+        "odbc": capabilities & CLIENT_ODBC != 0,
+        "local_files": capabilities & CLIENT_LOCAL_FILES != 0,
+        "ignore_space": capabilities & CLIENT_IGNORE_SPACE != 0,
+        "protocol_41": capabilities & CLIENT_PROTOCOL_41 != 0,
+        "interactive": capabilities & CLIENT_INTERACTIVE != 0,
+        "ssl": capabilities & CLIENT_SSL != 0,
+        "ignore_sigpipe": capabilities & CLIENT_IGNORE_SIGPIPE != 0,
+        "transactions": capabilities & CLIENT_TRANSACTIONS != 0,
+        "reserved": capabilities & CLIENT_RESERVED != 0,
+        "secure_connection": capabilities & CLIENT_SECURE_CONNECTION != 0,
+        "multi_statements": capabilities & CLIENT_MULTI_STATEMENTS != 0,
+        "multi_results": capabilities & CLIENT_MULTI_RESULTS != 0,
+        "ps_multi_results": capabilities & CLIENT_PS_MULTI_RESULTS != 0,
+        "plugin_auth": capabilities & CLIENT_PLUGIN_AUTH != 0,
+        "connect_attrs": capabilities & CLIENT_CONNECT_ATTRS != 0,
+        "plugin_auth_lenenc_client_data": capabilities & CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA != 0,
+        "can_handle_expired_passwords": capabilities & CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS != 0,
+        "session_track": capabilities & CLIENT_SESSION_TRACK != 0,
+        "deprecate_eof": capabilities & CLIENT_DEPRECATE_EOF != 0,
+    })
+}
+
+const CLIENT_LONG_PASSWORD: u32 = 0x0000_0001;
+const CLIENT_FOUND_ROWS: u32 = 0x0000_0002;
+const CLIENT_LONG_FLAG: u32 = 0x0000_0004;
+const CLIENT_CONNECT_WITH_DB: u32 = 0x0000_0008;
+const CLIENT_NO_SCHEMA: u32 = 0x0000_0010;
+const CLIENT_COMPRESS: u32 = 0x0000_0020;
+const CLIENT_ODBC: u32 = 0x0000_0040;
+const CLIENT_LOCAL_FILES: u32 = 0x0000_0080;
+const CLIENT_IGNORE_SPACE: u32 = 0x0000_0100;
+const CLIENT_PROTOCOL_41: u32 = 0x0000_0200;
+const CLIENT_INTERACTIVE: u32 = 0x0000_0400;
+const CLIENT_SSL: u32 = 0x0000_0800;
+const CLIENT_IGNORE_SIGPIPE: u32 = 0x0000_1000;
+const CLIENT_TRANSACTIONS: u32 = 0x0000_2000;
+const CLIENT_RESERVED: u32 = 0x0000_4000;
+const CLIENT_SECURE_CONNECTION: u32 = 0x0000_8000;
+const CLIENT_MULTI_STATEMENTS: u32 = 0x0001_0000;
+const CLIENT_MULTI_RESULTS: u32 = 0x0002_0000;
+const CLIENT_PS_MULTI_RESULTS: u32 = 0x0004_0000;
+const CLIENT_PLUGIN_AUTH: u32 = 0x0008_0000;
+const CLIENT_CONNECT_ATTRS: u32 = 0x0010_0000;
+const CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA: u32 = 0x0020_0000;
+const CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS: u32 = 0x0040_0000;
+const CLIENT_SESSION_TRACK: u32 = 0x0080_0000;
+const CLIENT_DEPRECATE_EOF: u32 = 0x0100_0000;
 
 struct MssqlVersionInfo {
     name: String,
