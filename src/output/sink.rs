@@ -179,58 +179,144 @@ fn raw_banner_for_data(outcome: &ScanOutcome) -> String {
 
 fn postgres_data(outcome: &ScanOutcome) -> Value {
     let raw_bytes = decode_banner_raw_bytes(&outcome.banner.raw_hex).unwrap_or_default();
-    let auth = parse_postgres_auth_request(&raw_bytes);
+    let parsed = parse_postgres_messages(&raw_bytes);
+    let server_version = parsed
+        .parameters
+        .get("server_version")
+        .cloned()
+        .or(parsed.server_version);
     serde_json::json!({
-        "auth_method": auth.method,
-        "auth_code": auth.code,
-        "auth_mechanisms": auth.mechanisms,
+        "protocol_version": "3.0",
+        "server_version": server_version.clone().unwrap_or_default(),
+        "server_type": "PostgreSQL",
+        "version_detail": parse_postgres_version_detail(server_version.as_deref()),
+        "auth_method": parsed.auth_method,
+        "ssl_required": parsed.ssl_required,
+        "parameters": parsed.parameters,
+        "weak_auth": parsed.weak_auth,
+        "allows_remote_connections": parsed.allows_remote_connections,
+        "error_message": parsed.error_message,
+        "supports_ssl": parsed.supports_ssl,
+        "auth_code": parsed.auth_code,
+        "auth_mechanisms": parsed.auth_mechanisms,
         "raw_hex": outcome.banner.raw_hex,
         "read_reason": outcome.banner.read_reason,
     })
 }
 
 struct PostgresAuthInfo {
-    method: String,
-    code: Option<u32>,
-    mechanisms: Vec<String>,
+    auth_method: String,
+    auth_code: Option<u32>,
+    auth_mechanisms: Vec<String>,
+    parameters: BTreeMap<String, String>,
+    error_message: Option<String>,
+    server_version: Option<String>,
+    supports_ssl: Option<bool>,
+    ssl_required: Option<bool>,
+    weak_auth: bool,
+    allows_remote_connections: bool,
 }
 
-fn parse_postgres_auth_request(bytes: &[u8]) -> PostgresAuthInfo {
+fn parse_postgres_messages(bytes: &[u8]) -> PostgresAuthInfo {
     let mut info = PostgresAuthInfo {
-        method: "unknown".to_string(),
-        code: None,
-        mechanisms: Vec::new(),
+        auth_method: "unknown".to_string(),
+        auth_code: None,
+        auth_mechanisms: Vec::new(),
+        parameters: BTreeMap::new(),
+        error_message: None,
+        server_version: None,
+        supports_ssl: None,
+        ssl_required: None,
+        weak_auth: false,
+        allows_remote_connections: true,
     };
-
-    if bytes.len() < 9 || bytes[0] != b'R' {
-        return info;
+    let mut idx = 0usize;
+    while idx + 5 <= bytes.len() {
+        let msg_type = bytes[idx];
+        let Some(len) = read_u32(bytes, idx + 1) else {
+            break;
+        };
+        let total_len = len as usize + 1;
+        if total_len < 5 || idx + total_len > bytes.len() {
+            break;
+        }
+        let payload = &bytes[idx + 5..idx + total_len];
+        match msg_type {
+            b'R' => parse_postgres_auth_request(payload, &mut info),
+            b'S' => parse_postgres_parameter_status(payload, &mut info),
+            b'E' => parse_postgres_error_response(payload, &mut info),
+            _ => {}
+        }
+        idx += total_len;
     }
 
-    let code = read_u32(bytes, 5);
-    info.code = code;
+    if let Some(err) = info.error_message.as_deref() {
+        if err.to_ascii_lowercase().contains("no pg_hba.conf entry") {
+            info.allows_remote_connections = false;
+        }
+    }
+
+    info.weak_auth = matches!(info.auth_method.as_str(), "trust" | "password");
+    info
+}
+
+fn parse_postgres_auth_request(payload: &[u8], info: &mut PostgresAuthInfo) {
+    let code = read_u32(payload, 0);
+    info.auth_code = code;
     match code {
-        Some(0) => info.method = "ok".to_string(),
-        Some(3) => info.method = "password".to_string(),
-        Some(5) => info.method = "md5".to_string(),
+        Some(0) => info.auth_method = "trust".to_string(),
+        Some(3) => info.auth_method = "password".to_string(),
+        Some(5) => info.auth_method = "md5".to_string(),
         Some(10) => {
-            info.mechanisms = parse_postgres_sasl_mechanisms(&bytes[9..]);
+            info.auth_mechanisms = parse_postgres_sasl_mechanisms(payload.get(4..).unwrap_or(&[]));
             if info
-                .mechanisms
+                .auth_mechanisms
                 .iter()
                 .any(|mech| mech.eq_ignore_ascii_case("SCRAM-SHA-256"))
             {
-                info.method = "scram-sha-256".to_string();
-            } else if !info.mechanisms.is_empty() {
-                info.method = "sasl".to_string();
+                info.auth_method = "scram-sha-256".to_string();
+            } else if !info.auth_mechanisms.is_empty() {
+                info.auth_method = "sasl".to_string();
             }
         }
-        Some(11) => info.method = "sasl-continue".to_string(),
-        Some(12) => info.method = "sasl-final".to_string(),
-        Some(_) => {}
-        None => {}
+        Some(11) => info.auth_method = "sasl-continue".to_string(),
+        Some(12) => info.auth_method = "sasl-final".to_string(),
+        Some(_) | None => {}
     }
+}
 
-    info
+fn parse_postgres_parameter_status(payload: &[u8], info: &mut PostgresAuthInfo) {
+    let (name, idx) = match read_cstring(payload, 0) {
+        Some(val) => val,
+        None => return,
+    };
+    let (value, _) = match read_cstring(payload, idx) {
+        Some(val) => val,
+        None => return,
+    };
+    if name == "server_version" {
+        info.server_version = Some(value.clone());
+    }
+    info.parameters.insert(name, value);
+}
+
+fn parse_postgres_error_response(payload: &[u8], info: &mut PostgresAuthInfo) {
+    let mut idx = 0usize;
+    while idx < payload.len() {
+        let field_type = payload[idx];
+        idx += 1;
+        if field_type == 0 {
+            break;
+        }
+        let (value, next_idx) = match read_cstring(payload, idx) {
+            Some(val) => val,
+            None => break,
+        };
+        idx = next_idx;
+        if field_type == b'M' {
+            info.error_message = Some(value);
+        }
+    }
 }
 
 fn parse_postgres_sasl_mechanisms(bytes: &[u8]) -> Vec<String> {
@@ -249,6 +335,58 @@ fn parse_postgres_sasl_mechanisms(bytes: &[u8]) -> Vec<String> {
         }
     }
     mechanisms
+}
+
+fn parse_postgres_version_detail(value: Option<&str>) -> Value {
+    let Some(value) = value else {
+        return serde_json::json!({
+            "major": null,
+            "minor": null,
+            "patch": null,
+            "distribution": "",
+            "build_info": "",
+        });
+    };
+    let mut major = None;
+    let mut minor = None;
+    let mut patch = None;
+    let mut distribution = String::new();
+    let mut build_info = String::new();
+
+    let mut parts = value.splitn(2, ' ');
+    let version_part = parts.next().unwrap_or_default();
+    let tail = parts.next().unwrap_or_default();
+    let mut version_iter = version_part.split('.');
+    major = version_iter.next().and_then(|v| v.parse::<u32>().ok());
+    minor = version_iter.next().and_then(|v| v.parse::<u32>().ok());
+    patch = version_iter.next().and_then(|v| v.parse::<u32>().ok());
+
+    if let Some(start) = tail.find('(') {
+        if let Some(end) = tail.rfind(')') {
+            let inside = tail[start + 1..end].trim();
+            if let Some((dist, build)) = inside.split_once(' ') {
+                distribution = dist.to_string();
+                build_info = build.to_string();
+            } else {
+                distribution = inside.to_string();
+            }
+        }
+    }
+
+    serde_json::json!({
+        "major": major,
+        "minor": minor,
+        "patch": patch,
+        "distribution": distribution,
+        "build_info": build_info,
+    })
+}
+
+fn read_cstring(bytes: &[u8], start: usize) -> Option<(String, usize)> {
+    let end = bytes.get(start..)?.iter().position(|b| *b == 0)?;
+    let slice = &bytes[start..start + end];
+    let value = String::from_utf8_lossy(slice).to_string();
+    Some((value, start + end + 1))
 }
 
 fn imap_data(outcome: &ScanOutcome) -> Value {
@@ -668,9 +806,40 @@ mod tests {
             0x52, 0x00, 0x00, 0x00, 0x17, 0x00, 0x00, 0x00, 0x0a, 0x53, 0x43, 0x52,
             0x41, 0x4d, 0x2d, 0x53, 0x48, 0x41, 0x2d, 0x32, 0x35, 0x36, 0x00, 0x00,
         ];
-        let info = parse_postgres_auth_request(&bytes);
-        assert_eq!(info.code, Some(10));
-        assert_eq!(info.method, "scram-sha-256");
-        assert_eq!(info.mechanisms, vec!["SCRAM-SHA-256".to_string()]);
+        let info = parse_postgres_messages(&bytes);
+        assert_eq!(info.auth_code, Some(10));
+        assert_eq!(info.auth_method, "scram-sha-256");
+        assert_eq!(info.auth_mechanisms, vec!["SCRAM-SHA-256".to_string()]);
+    }
+
+    #[test]
+    fn parses_postgres_parameter_status() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"S\0\0\0\0");
+        let payload = b"server_version\015.4\0";
+        let len = (payload.len() + 4) as u32;
+        bytes[1..5].copy_from_slice(&len.to_be_bytes());
+        bytes.extend_from_slice(payload);
+        let info = parse_postgres_messages(&bytes);
+        assert_eq!(
+            info.parameters.get("server_version"),
+            Some(&"15.4".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_postgres_error_response() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"E\0\0\0\0");
+        let payload = b"Mno pg_hba.conf entry\0\0";
+        let len = (payload.len() + 4) as u32;
+        bytes[1..5].copy_from_slice(&len.to_be_bytes());
+        bytes.extend_from_slice(payload);
+        let info = parse_postgres_messages(&bytes);
+        assert_eq!(
+            info.error_message,
+            Some("no pg_hba.conf entry".to_string())
+        );
+        assert!(!info.allows_remote_connections);
     }
 }
