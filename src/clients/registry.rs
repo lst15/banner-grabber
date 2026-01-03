@@ -3,7 +3,6 @@ use crate::model::{Protocol, ScanMode, Target};
 use super::ftp::FtpClient;
 use super::imap::ImapClient;
 use super::memcached::MemcachedClient;
-use super::mongodb::MongodbClient;
 use super::mqtt::MqttClient;
 use super::mssql::MssqlClient;
 use super::mysql::MysqlClient;
@@ -29,7 +28,6 @@ static NTP_CLIENT: NtpClient = NtpClient;
 static FTP_CLIENT: FtpClient = FtpClient;
 static IMAP_CLIENT: ImapClient = ImapClient;
 static MEMCACHED_CLIENT: MemcachedClient = MemcachedClient;
-static MONGODB_CLIENT: MongodbClient = MongodbClient;
 static MQTT_CLIENT: MqttClient = MqttClient;
 static MSSQL_CLIENT: MssqlClient = MssqlClient;
 static MYSQL_CLIENT: MysqlClient = MysqlClient;
@@ -50,7 +48,6 @@ pub fn client_for_target(req: &ClientRequest) -> Option<&'static dyn Client> {
         Protocol::Ftp => Some(&FTP_CLIENT),
         Protocol::Imap => Some(&IMAP_CLIENT),
         Protocol::Memcached => Some(&MEMCACHED_CLIENT),
-        Protocol::Mongodb => Some(&MONGODB_CLIENT),
         Protocol::Mqtt => Some(&MQTT_CLIENT),
         Protocol::Mssql => Some(&MSSQL_CLIENT),
         Protocol::Mysql => Some(&MYSQL_CLIENT),
