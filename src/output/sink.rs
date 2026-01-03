@@ -37,6 +37,8 @@ impl OutputSink {
                     imap_data(&outcome)
                 } else if proto == "ssh" {
                     ssh_data(&outcome)
+                } else if proto == "postgres" {
+                    postgres_data(&outcome)
                 } else {
                     serde_json::json!(raw_banner_for_data(&outcome))
                 };
@@ -173,6 +175,80 @@ fn raw_banner_for_data(outcome: &ScanOutcome) -> String {
         return outcome.banner.printable.clone();
     }
     decode_banner_raw(&outcome.banner.raw_hex).unwrap_or_default()
+}
+
+fn postgres_data(outcome: &ScanOutcome) -> Value {
+    let raw_bytes = decode_banner_raw_bytes(&outcome.banner.raw_hex).unwrap_or_default();
+    let auth = parse_postgres_auth_request(&raw_bytes);
+    serde_json::json!({
+        "auth_method": auth.method,
+        "auth_code": auth.code,
+        "auth_mechanisms": auth.mechanisms,
+        "raw_hex": outcome.banner.raw_hex,
+        "read_reason": outcome.banner.read_reason,
+    })
+}
+
+struct PostgresAuthInfo {
+    method: String,
+    code: Option<u32>,
+    mechanisms: Vec<String>,
+}
+
+fn parse_postgres_auth_request(bytes: &[u8]) -> PostgresAuthInfo {
+    let mut info = PostgresAuthInfo {
+        method: "unknown".to_string(),
+        code: None,
+        mechanisms: Vec::new(),
+    };
+
+    if bytes.len() < 9 || bytes[0] != b'R' {
+        return info;
+    }
+
+    let code = read_u32(bytes, 5);
+    info.code = code;
+    match code {
+        Some(0) => info.method = "ok".to_string(),
+        Some(3) => info.method = "password".to_string(),
+        Some(5) => info.method = "md5".to_string(),
+        Some(10) => {
+            info.mechanisms = parse_postgres_sasl_mechanisms(&bytes[9..]);
+            if info
+                .mechanisms
+                .iter()
+                .any(|mech| mech.eq_ignore_ascii_case("SCRAM-SHA-256"))
+            {
+                info.method = "scram-sha-256".to_string();
+            } else if !info.mechanisms.is_empty() {
+                info.method = "sasl".to_string();
+            }
+        }
+        Some(11) => info.method = "sasl-continue".to_string(),
+        Some(12) => info.method = "sasl-final".to_string(),
+        Some(_) => {}
+        None => {}
+    }
+
+    info
+}
+
+fn parse_postgres_sasl_mechanisms(bytes: &[u8]) -> Vec<String> {
+    let mut mechanisms = Vec::new();
+    let mut start = 0usize;
+    for (idx, byte) in bytes.iter().enumerate() {
+        if *byte == 0 {
+            if idx == start {
+                break;
+            }
+            let mech = String::from_utf8_lossy(&bytes[start..idx]).to_string();
+            if !mech.is_empty() {
+                mechanisms.push(mech);
+            }
+            start = idx + 1;
+        }
+    }
+    mechanisms
 }
 
 fn imap_data(outcome: &ScanOutcome) -> Value {
@@ -579,5 +655,22 @@ impl ScanOutcome {
             Status::Timeout => "timeout",
             Status::Error => "error",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_postgres_scram_auth_request() {
+        let bytes = [
+            0x52, 0x00, 0x00, 0x00, 0x17, 0x00, 0x00, 0x00, 0x0a, 0x53, 0x43, 0x52,
+            0x41, 0x4d, 0x2d, 0x53, 0x48, 0x41, 0x2d, 0x32, 0x35, 0x36, 0x00, 0x00,
+        ];
+        let info = parse_postgres_auth_request(&bytes);
+        assert_eq!(info.code, Some(10));
+        assert_eq!(info.method, "scram-sha-256");
+        assert_eq!(info.mechanisms, vec!["SCRAM-SHA-256".to_string()]);
     }
 }
