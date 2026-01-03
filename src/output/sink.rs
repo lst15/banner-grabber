@@ -362,8 +362,12 @@ struct MssqlVersionInfo {
 }
 
 fn parse_mssql_prelogin_version(raw_bytes: &[u8]) -> Option<MssqlVersionInfo> {
-    let payload = extract_tds_payload(raw_bytes).unwrap_or_else(|| raw_bytes.to_vec());
-    let (major, minor, build, sub_build) = parse_mssql_prelogin_version_bytes(&payload)?;
+    let payload = extract_tds_payload(raw_bytes);
+    let parsed = payload
+        .as_deref()
+        .and_then(parse_mssql_prelogin_version_bytes)
+        .or_else(|| parse_mssql_prelogin_version_any(raw_bytes))?;
+    let (major, minor, build, sub_build) = parsed;
     let branded = mssql_branded_version(major, minor)?;
     let product = format!("Microsoft SQL Server {branded}");
     let (service_pack_level, post_sp_patches_applied) = mssql_service_pack_level(&branded, build);
@@ -422,6 +426,36 @@ fn parse_mssql_prelogin_version_bytes(payload: &[u8]) -> Option<(u8, u8, u16, u1
             let sub_build = u16::from_be_bytes([data[4], data[5]]);
             return Some((major, minor, build, sub_build));
         }
+    }
+    None
+}
+
+fn parse_mssql_prelogin_version_any(bytes: &[u8]) -> Option<(u8, u8, u16, u16)> {
+    if bytes.len() < 6 {
+        return None;
+    }
+    for base in 0..bytes.len().saturating_sub(6) {
+        if bytes.get(base)? != &0x00 {
+            continue;
+        }
+        let offset = u16::from_be_bytes([*bytes.get(base + 1)?, *bytes.get(base + 2)?]) as usize;
+        let length = u16::from_be_bytes([*bytes.get(base + 3)?, *bytes.get(base + 4)?]) as usize;
+        if length < 6 {
+            continue;
+        }
+        let data_start = base + offset;
+        if data_start + 6 > bytes.len() {
+            continue;
+        }
+        let data = &bytes[data_start..data_start + 6];
+        let major = data[0];
+        let minor = data[1];
+        if !(6..=20).contains(&major) || minor > 60 {
+            continue;
+        }
+        let build = u16::from_be_bytes([data[2], data[3]]);
+        let sub_build = u16::from_be_bytes([data[4], data[5]]);
+        return Some((major, minor, build, sub_build));
     }
     None
 }
