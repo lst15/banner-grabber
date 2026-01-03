@@ -56,6 +56,7 @@ pub enum Protocol {
     Memcached,
     Mongodb,
     Mqtt,
+    #[value(alias = "ms-sql-s")]
     Mssql,
     Mysql,
     Pop3,

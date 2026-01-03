@@ -8,7 +8,6 @@ use super::mqtt::MqttClient;
 use super::mssql::MssqlClient;
 use super::mysql::MysqlClient;
 use super::pop3::Pop3Client;
-use super::postgres::PostgresClient;
 use super::redis::RedisClient;
 use super::smb::SmbClient;
 use super::smtp::SmtpClient;
@@ -35,7 +34,6 @@ static MQTT_CLIENT: MqttClient = MqttClient;
 static MSSQL_CLIENT: MssqlClient = MssqlClient;
 static MYSQL_CLIENT: MysqlClient = MysqlClient;
 static POP3_CLIENT: Pop3Client = Pop3Client;
-static POSTGRES_CLIENT: PostgresClient = PostgresClient;
 static REDIS_CLIENT: RedisClient = RedisClient;
 static SMTP_CLIENT: SmtpClient = SmtpClient;
 static SMB_CLIENT: SmbClient = SmbClient;
@@ -57,7 +55,6 @@ pub fn client_for_target(req: &ClientRequest) -> Option<&'static dyn Client> {
         Protocol::Mssql => Some(&MSSQL_CLIENT),
         Protocol::Mysql => Some(&MYSQL_CLIENT),
         Protocol::Pop3 => Some(&POP3_CLIENT),
-        Protocol::Postgres => Some(&POSTGRES_CLIENT),
         Protocol::Redis => Some(&REDIS_CLIENT),
         Protocol::Smb => Some(&SMB_CLIENT),
         Protocol::Smtp => Some(&SMTP_CLIENT),
