@@ -22,6 +22,7 @@ openssl = "0.10"
 tokio-openssl = "0.6"
 url = "2"
 wappalyzer = { git = "https://github.com/lst15/wappalyzer.git" }
+base64 = "0.22"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

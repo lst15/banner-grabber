@@ -3,6 +3,7 @@ mod http;
 mod imap;
 mod mssql;
 mod mysql;
+mod smtp;
 mod ssh;
 
 use crate::model::{OutputConfig, OutputFormat, ScanOutcome, Status};
@@ -45,6 +46,8 @@ impl OutputSink {
                     mssql::mssql_data(&outcome)
                 } else if proto == "mysql" {
                     mysql::mysql_data(&outcome)
+                } else if proto == "smtp" {
+                    smtp::smtp_data(&outcome)
                 } else if proto == "ssh" {
                     ssh::ssh_data(&outcome)
                 } else {
