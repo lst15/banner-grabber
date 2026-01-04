@@ -51,6 +51,8 @@ pub struct OutputConfig {
 pub enum Protocol {
     Ftp,
     #[value(alias = "zeus-admin")]
+    #[value(alias = "http-alt")]
+    #[value(alias = "nessus")]
     Http,
     Https,
     Imap,
