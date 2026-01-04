@@ -53,7 +53,10 @@ pub enum Protocol {
     #[value(alias = "zeus-admin")]
     #[value(alias = "http-alt")]
     #[value(alias = "nessus")]
+    #[value(alias = "activesync")]
+    #[value(alias = "http-proxy")]
     Http,
+    #[value(alias = "appserv-http")]
     Https,
     Imap,
     Memcached,
