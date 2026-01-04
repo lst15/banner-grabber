@@ -7,3 +7,4 @@ pub mod pop3;
 pub mod redis;
 pub mod smtp;
 pub mod telnet;
+pub mod upnp;

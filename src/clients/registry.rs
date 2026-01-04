@@ -14,6 +14,7 @@ use super::smb::SmbClient;
 use super::smtp::SmtpClient;
 use super::ssh::SshClient;
 use super::telnet::TelnetClient;
+use super::upnp::UpnpClient;
 use super::vnc::VncClient;
 use crate::clients::NtpClient;
 use crate::clients::{Client, UdpClient};
@@ -26,6 +27,7 @@ pub struct ClientRequest {
 }
 
 static NTP_CLIENT: NtpClient = NtpClient;
+static UPNP_CLIENT: UpnpClient = UpnpClient;
 
 static FTP_CLIENT: FtpClient = FtpClient;
 static IMAP_CLIENT: ImapClient = ImapClient;
@@ -63,6 +65,7 @@ pub fn client_for_target(req: &ClientRequest) -> Option<&'static dyn Client> {
         Protocol::Smtp => Some(&SMTP_CLIENT),
         Protocol::Ssh => Some(&SSH_CLIENT),
         Protocol::Telnet => Some(&TELNET_CLIENT),
+        Protocol::Upnp => Some(&UPNP_CLIENT),
         Protocol::Vnc => Some(&VNC_CLIENT),
         _ => None,
     }

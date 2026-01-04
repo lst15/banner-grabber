@@ -86,6 +86,8 @@ pub enum Protocol {
     Tls,
     Vnc,
     Ntp,
+    #[value(alias = "ssdp")]
+    Upnp,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ValueEnum)]
@@ -127,6 +129,7 @@ impl fmt::Display for Protocol {
             Protocol::Tls => "tls",
             Protocol::Vnc => "vnc",
             Protocol::Ntp => "ntp",
+            Protocol::Upnp => "upnp",
         };
         write!(f, "{}", label)
     }
