@@ -15,8 +15,8 @@ use super::smtp::SmtpClient;
 use super::ssh::SshClient;
 use super::telnet::TelnetClient;
 use super::vnc::VncClient;
-use crate::clients::NtpClient;
 use crate::clients::{Client, UdpClient};
+use crate::clients::{NtpClient, UpnpClient};
 
 pub struct ClientRequest {
     #[allow(dead_code)]
@@ -26,6 +26,7 @@ pub struct ClientRequest {
 }
 
 static NTP_CLIENT: NtpClient = NtpClient;
+static UPNP_CLIENT: UpnpClient = UpnpClient;
 
 static FTP_CLIENT: FtpClient = FtpClient;
 static IMAP_CLIENT: ImapClient = ImapClient;
@@ -75,6 +76,7 @@ pub fn udp_client_for_target(req: &ClientRequest) -> Option<&'static dyn UdpClie
 
     match req.protocol {
         Protocol::Ntp => Some(&NTP_CLIENT),
+        Protocol::Upnp => Some(&UPNP_CLIENT),
         _ => None,
     }
 }

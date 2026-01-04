@@ -6,6 +6,7 @@ mod session;
 mod stateful;
 
 pub use binaries::ntp::NtpClient;
+pub use binaries::upnp::UpnpClient;
 pub use binaries::{mssql, mysql, rpcbind};
 pub use line_based::{ftp, imap, imqbroker, memcached, mqtt, pop3, redis, smtp, telnet};
 pub use registry::{client_for_target, udp_client_for_target, ClientRequest};
