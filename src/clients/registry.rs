@@ -8,6 +8,7 @@ use super::mssql::MssqlClient;
 use super::mysql::MysqlClient;
 use super::pop3::Pop3Client;
 use super::redis::RedisClient;
+use super::rpcbind::RpcbindClient;
 use super::smb::SmbClient;
 use super::smtp::SmtpClient;
 use super::ssh::SshClient;
@@ -33,6 +34,7 @@ static MSSQL_CLIENT: MssqlClient = MssqlClient;
 static MYSQL_CLIENT: MysqlClient = MysqlClient;
 static POP3_CLIENT: Pop3Client = Pop3Client;
 static REDIS_CLIENT: RedisClient = RedisClient;
+static RPCBIND_CLIENT: RpcbindClient = RpcbindClient;
 static SMTP_CLIENT: SmtpClient = SmtpClient;
 static SMB_CLIENT: SmbClient = SmbClient;
 static SSH_CLIENT: SshClient = SshClient;
@@ -53,6 +55,7 @@ pub fn client_for_target(req: &ClientRequest) -> Option<&'static dyn Client> {
         Protocol::Mysql => Some(&MYSQL_CLIENT),
         Protocol::Pop3 => Some(&POP3_CLIENT),
         Protocol::Redis => Some(&REDIS_CLIENT),
+        Protocol::Rpcbind => Some(&RPCBIND_CLIENT),
         Protocol::Smb => Some(&SMB_CLIENT),
         Protocol::Smtp => Some(&SMTP_CLIENT),
         Protocol::Ssh => Some(&SSH_CLIENT),
