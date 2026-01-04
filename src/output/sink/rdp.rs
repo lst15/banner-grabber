@@ -5,10 +5,8 @@ use super::common::decode_banner_raw_bytes;
 
 pub(super) fn rdp_data(outcome: &ScanOutcome) -> Value {
     let raw_bytes = decode_banner_raw_bytes(&outcome.banner.raw_hex).unwrap_or_default();
-    if let Ok(value) = serde_json::from_slice::<Value>(&raw_bytes) {
-        if value.is_object() {
-            return value;
-        }
+    if let Some(value) = parse_json_payload(&raw_bytes) {
+        return value;
     }
 
     let text = String::from_utf8_lossy(&raw_bytes);
@@ -70,4 +68,19 @@ pub(super) fn rdp_data(outcome: &ScanOutcome) -> Value {
         "ntlm_info": ntlm_info,
         "tcp_port": outcome.target.port,
     })
+}
+
+fn parse_json_payload(bytes: &[u8]) -> Option<Value> {
+    if let Ok(value) = serde_json::from_slice::<Value>(bytes) {
+        if value.is_object() {
+            return Some(value);
+        }
+    }
+
+    let start = bytes.iter().position(|b| *b == b'{')?;
+    let end = bytes.iter().rposition(|b| *b == b'}')?;
+    if start >= end {
+        return None;
+    }
+    serde_json::from_slice::<Value>(&bytes[start..=end]).ok()
 }
