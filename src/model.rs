@@ -63,6 +63,7 @@ pub enum Protocol {
     Pop3,
     Postgres,
     Redis,
+    Rpcbind,
     Smb,
     #[value(alias = "submission")]
     Smtp,
@@ -103,6 +104,7 @@ impl fmt::Display for Protocol {
             Protocol::Pop3 => "pop3",
             Protocol::Postgres => "postgres",
             Protocol::Redis => "redis",
+            Protocol::Rpcbind => "rpcbind",
             Protocol::Smb => "smb",
             Protocol::Smtp => "smtp",
             Protocol::Ssh => "ssh",
