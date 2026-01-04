@@ -5,6 +5,12 @@ use super::common::decode_banner_raw_bytes;
 
 pub(super) fn rdp_data(outcome: &ScanOutcome) -> Value {
     let raw_bytes = decode_banner_raw_bytes(&outcome.banner.raw_hex).unwrap_or_default();
+    if let Ok(value) = serde_json::from_slice::<Value>(&raw_bytes) {
+        if value.is_object() {
+            return value;
+        }
+    }
+
     let text = String::from_utf8_lossy(&raw_bytes);
 
     let mut security_layer = Map::new();

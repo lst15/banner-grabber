@@ -3,6 +3,8 @@ use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
+use serde_json::{json, Map, Value};
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::OnceLock;
@@ -33,14 +35,19 @@ impl Client for RdpClient {
         let mut session = ClientSession::new(cfg);
         let peer = stream.peer_addr().context("missing peer address for RDP probe")?;
 
-        let protocol_results = enum_protocols(peer, cfg.read_timeout).await?;
-        session.append_metadata(protocol_results);
-
-        let cipher_results = enum_ciphers(peer, cfg.read_timeout).await?;
-        session.append_metadata(cipher_results);
-
-        let ntlm_results = ntlm_info(peer, cfg).await?;
-        session.append_metadata(ntlm_results);
+        let security_layer = enum_protocols(peer, cfg.read_timeout).await?;
+        let (encryption_level, ciphers, protocol_version) =
+            enum_ciphers(peer, cfg.read_timeout).await?;
+        let ntlm_info = ntlm_info(peer, cfg).await?;
+        let data = json!({
+            "security_layer": Value::Object(map_from_btree(security_layer)),
+            "rdp_encryption_level": encryption_level.unwrap_or_default(),
+            "rdp_ciphers": Value::Object(map_from_btree(ciphers)),
+            "rdp_protocol_version": protocol_version.unwrap_or_default(),
+            "ntlm_info": Value::Object(map_from_btree(ntlm_info)),
+            "tcp_port": peer.port(),
+        });
+        session.append_metadata(serde_json::to_vec(&data)?);
 
         Ok(session.finish())
     }
@@ -158,7 +165,10 @@ async fn read_once(
     Ok(buf)
 }
 
-async fn enum_protocols(peer: SocketAddr, timeout: std::time::Duration) -> anyhow::Result<Vec<u8>> {
+async fn enum_protocols(
+    peer: SocketAddr,
+    timeout: std::time::Duration,
+) -> anyhow::Result<BTreeMap<String, String>> {
     let protocols = [
         ("Native RDP", PROTO_RDP),
         ("SSL", PROTO_SSL),
@@ -167,26 +177,27 @@ async fn enum_protocols(peer: SocketAddr, timeout: std::time::Duration) -> anyho
         ("CredSSP with Early User Auth", PROTO_HYBRID_EX),
     ];
 
-    let mut output = Vec::new();
-    output.extend_from_slice(b"SECURITY_LAYER\n");
+    let mut output = BTreeMap::new();
     for (label, proto) in protocols {
         let mut stream = connect_peer(peer).await?;
         stream.write_all(&rdp_neg_req(proto)).await?;
         let buf = read_once(&mut stream, timeout, 2048).await?;
         let result = parse_rdp_neg_response(&buf);
-        let line = match result {
-            NegResult::Success => format!("{label}: SUCCESS\n"),
-            NegResult::Failed(Some(code)) => format!("{label}: FAILED ({code})\n"),
-            NegResult::Failed(None) => format!("{label}: FAILED\n"),
-            NegResult::Unknown => format!("{label}: Unknown\n"),
+        let value = match result {
+            NegResult::Success => "SUCCESS".to_string(),
+            NegResult::Failed(Some(code)) => format!("FAILED ({code})"),
+            NegResult::Failed(None) => "FAILED".to_string(),
+            NegResult::Unknown => "Unknown".to_string(),
         };
-        output.extend_from_slice(line.as_bytes());
+        output.insert(label.to_string(), value);
     }
-    output.extend_from_slice(b"END_SECURITY_LAYER\n");
     Ok(output)
 }
 
-async fn enum_ciphers(peer: SocketAddr, timeout: std::time::Duration) -> anyhow::Result<Vec<u8>> {
+async fn enum_ciphers(
+    peer: SocketAddr,
+    timeout: std::time::Duration,
+) -> anyhow::Result<(Option<String>, BTreeMap<String, String>, Option<String>)> {
     let ciphers = [
         ("40-bit RC4", CIPHER_40),
         ("56-bit RC4", CIPHER_56),
@@ -194,9 +205,7 @@ async fn enum_ciphers(peer: SocketAddr, timeout: std::time::Duration) -> anyhow:
         ("FIPS 140-1", CIPHER_FIPS),
     ];
 
-    let mut output = Vec::new();
-    output.extend_from_slice(b"ENCRYPTION\n");
-
+    let mut output = BTreeMap::new();
     let mut level = None;
     let mut proto_version = None;
 
@@ -208,15 +217,16 @@ async fn enum_ciphers(peer: SocketAddr, timeout: std::time::Duration) -> anyhow:
         let resp = read_once(&mut stream, timeout, 8192).await?;
 
         let parsed = parse_mcs_connect_response(&resp);
-        if let Some(parsed_cipher) = parsed.cipher {
+        let cipher_value = if let Some(parsed_cipher) = parsed.cipher {
             if parsed_cipher == cipher as u8 {
-                output.extend_from_slice(format!("{label}: SUCCESS\n").as_bytes());
+                "SUCCESS".to_string()
             } else {
-                output.extend_from_slice(format!("{label}: FAILED\n").as_bytes());
+                "FAILED".to_string()
             }
         } else {
-            output.extend_from_slice(format!("{label}: FAILED\n").as_bytes());
-        }
+            "FAILED".to_string()
+        };
+        output.insert(label.to_string(), cipher_value);
         if level.is_none() {
             level = parsed.enc_level;
         }
@@ -225,15 +235,8 @@ async fn enum_ciphers(peer: SocketAddr, timeout: std::time::Duration) -> anyhow:
         }
     }
 
-    let level_label = level.map(encode_encryption_level).unwrap_or("Unknown");
-    let header = format!("ENCRYPTION\nRDP Encryption level: {level_label}\n");
-    let mut combined = header.into_bytes();
-    combined.extend_from_slice(&output[b"ENCRYPTION\n".len()..]);
-    if let Some(proto) = proto_version {
-        combined.extend_from_slice(format!("RDP Protocol Version: {proto}\n").as_bytes());
-    }
-    combined.extend_from_slice(b"END_ENCRYPTION\n");
-    Ok(combined)
+    let level_label = level.map(encode_encryption_level).map(str::to_string);
+    Ok((level_label, output, proto_version))
 }
 
 #[derive(Debug)]
@@ -297,34 +300,119 @@ fn parse_mcs_connect_response(bytes: &[u8]) -> McsResponse {
         return res;
     }
     let total_len = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
-    let total_len = total_len.min(bytes.len());
-    if bytes.get(5) != Some(&0xF0) {
+    if total_len > bytes.len() {
         return res;
     }
-    let payload = &bytes[7..total_len];
-    let mut idx = 0usize;
-    while idx + 4 <= payload.len() {
-        let block_type = u16::from_le_bytes([payload[idx], payload[idx + 1]]);
-        let block_len = u16::from_le_bytes([payload[idx + 2], payload[idx + 3]]) as usize;
-        if block_len < 4 || idx + block_len > payload.len() {
-            idx += 1;
-            continue;
+    let mut pos = 4;
+    let itut_len = bytes[pos] as usize;
+    let itut_code = bytes.get(pos + 1).copied().unwrap_or_default();
+    if itut_code != 0xF0 {
+        return res;
+    }
+    pos += 2;
+    if itut_len == 0 || pos + itut_len > total_len {
+        return res;
+    }
+    pos += 1;
+    let payload = &bytes[pos..total_len];
+    if let Some((core, sec)) = find_server_core_blocks(payload) {
+        if let Some(version) = core {
+            res.proto_version = Some(version);
+        }
+        if let Some((cipher, level)) = sec {
+            res.cipher = Some(cipher);
+            res.enc_level = Some(level);
+        }
+    }
+    res
+}
+
+fn find_server_core_blocks(payload: &[u8]) -> Option<(Option<String>, Option<(u8, u8)>)> {
+    if payload.len() < 24 {
+        return None;
+    }
+    let mut pos = 0usize;
+    if payload.get(pos)? != &0x7f {
+        return None;
+    }
+    pos += 1;
+    if payload.get(pos)? != &0x65 {
+        return None;
+    }
+    pos += 1;
+    let (_, len_len) = decode_asn1_length(&payload[pos..])?;
+    pos += len_len;
+    for _ in 0..6 {
+        let (_, header_len) = skip_asn1_element(&payload[pos..])?;
+        pos += header_len;
+    }
+    let (user_data, consumed) = read_octet_string(&payload[pos..])?;
+    pos += consumed;
+    if user_data.len() < 22 {
+        return None;
+    }
+    let (_, len_len) = decode_asn1_length(&user_data[22..])?;
+    let mut cursor = 22 + len_len;
+    let mut proto_version = None;
+    let mut sec = None;
+    while cursor + 4 <= user_data.len() {
+        let block_type = u16::from_le_bytes([user_data[cursor], user_data[cursor + 1]]);
+        let block_len = u16::from_le_bytes([user_data[cursor + 2], user_data[cursor + 3]]) as usize;
+        if block_len == 0 || cursor + block_len > user_data.len() {
+            break;
         }
         if block_type == 0x0c01 && block_len >= 8 {
             let version = u32::from_le_bytes([
-                payload[idx + 4],
-                payload[idx + 5],
-                payload[idx + 6],
-                payload[idx + 7],
+                user_data[cursor + 4],
+                user_data[cursor + 5],
+                user_data[cursor + 6],
+                user_data[cursor + 7],
             ]);
-            res.proto_version = Some(map_proto_version(version));
+            proto_version = Some(map_proto_version(version));
         } else if block_type == 0x0c02 && block_len >= 9 {
-            res.cipher = Some(payload[idx + 4]);
-            res.enc_level = Some(payload[idx + 8]);
+            let cipher = user_data[cursor + 4];
+            let level = user_data[cursor + 8];
+            sec = Some((cipher, level));
         }
-        idx += block_len;
+        cursor += block_len;
     }
-    res
+    Some((proto_version, sec))
+}
+
+fn decode_asn1_length(bytes: &[u8]) -> Option<(usize, usize)> {
+    let first = *bytes.get(0)? as usize;
+    if first & 0x80 == 0 {
+        return Some((first, 1));
+    }
+    let count = first & 0x7f;
+    if count == 0 || count > 4 || bytes.len() < 1 + count {
+        return None;
+    }
+    let mut len = 0usize;
+    for idx in 0..count {
+        len = (len << 8) | bytes[1 + idx] as usize;
+    }
+    Some((len, 1 + count))
+}
+
+fn skip_asn1_element(bytes: &[u8]) -> Option<(usize, usize)> {
+    let tag = *bytes.get(0)? as usize;
+    let (len, len_len) = decode_asn1_length(&bytes[1..])?;
+    let total = 1 + len_len + len;
+    Some((tag, total))
+}
+
+fn read_octet_string(bytes: &[u8]) -> Option<(Vec<u8>, usize)> {
+    if bytes.get(0)? != &0x04 {
+        return None;
+    }
+    let (len, len_len) = decode_asn1_length(&bytes[1..])?;
+    let start = 1 + len_len;
+    let end = start + len;
+    if end > bytes.len() {
+        return None;
+    }
+    Some((bytes[start..end].to_vec(), end))
 }
 
 fn map_proto_version(version: u32) -> String {
@@ -354,7 +442,7 @@ fn encode_encryption_level(level: u8) -> &'static str {
     }
 }
 
-async fn ntlm_info(peer: SocketAddr, cfg: &Config) -> anyhow::Result<Vec<u8>> {
+async fn ntlm_info(peer: SocketAddr, cfg: &Config) -> anyhow::Result<BTreeMap<String, String>> {
     let mut stream = connect_peer(peer).await?;
     stream
         .write_all(&rdp_neg_req(PROTO_SSL | PROTO_HYBRID | PROTO_HYBRID_EX))
@@ -362,7 +450,7 @@ async fn ntlm_info(peer: SocketAddr, cfg: &Config) -> anyhow::Result<Vec<u8>> {
     let buf = read_once(&mut stream, cfg.read_timeout, 2048).await?;
     let result = parse_rdp_neg_response(&buf);
     if !matches!(result, NegResult::Success) {
-        return Ok(Vec::new());
+        return Ok(BTreeMap::new());
     }
 
     let connector = rdp_tls_connector()?;
@@ -400,18 +488,9 @@ async fn ntlm_info(peer: SocketAddr, cfg: &Config) -> anyhow::Result<Vec<u8>> {
 
     let info = match parse_ntlm_challenge(&response) {
         Ok(info) => info,
-        Err(_) => return Ok(Vec::new()),
+        Err(_) => return Ok(BTreeMap::new()),
     };
-    if info.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut output = Vec::new();
-    output.extend_from_slice(b"NTLM_INFO\n");
-    for (key, value) in info {
-        output.extend_from_slice(format!("{key}: {value}\n").as_bytes());
-    }
-    output.extend_from_slice(b"END_NTLM_INFO\n");
-    Ok(output)
+    Ok(info.into_iter().collect())
 }
 
 fn ntlm_negotiate_blob() -> anyhow::Result<&'static [u8]> {
@@ -512,6 +591,13 @@ fn parse_ntlm_challenge(bytes: &[u8]) -> anyhow::Result<Vec<(String, String)>> {
     }
 
     Ok(output)
+}
+
+fn map_from_btree(input: BTreeMap<String, String>) -> Map<String, Value> {
+    input
+        .into_iter()
+        .map(|(key, value)| (key, Value::String(value)))
+        .collect()
 }
 
 fn push_decoded(output: &mut Vec<(String, String)>, key: &str, value: &[u8]) {
