@@ -8,6 +8,7 @@ use super::mqtt::MqttClient;
 use super::mssql::MssqlClient;
 use super::mysql::MysqlClient;
 use super::pop3::Pop3Client;
+use super::rdp::RdpClient;
 use super::redis::RedisClient;
 use super::rpcbind::RpcbindClient;
 use super::smb::SmbClient;
@@ -35,6 +36,7 @@ static MQTT_CLIENT: MqttClient = MqttClient;
 static MSSQL_CLIENT: MssqlClient = MssqlClient;
 static MYSQL_CLIENT: MysqlClient = MysqlClient;
 static POP3_CLIENT: Pop3Client = Pop3Client;
+static RDP_CLIENT: RdpClient = RdpClient;
 static REDIS_CLIENT: RedisClient = RedisClient;
 static RPCBIND_CLIENT: RpcbindClient = RpcbindClient;
 static SMTP_CLIENT: SmtpClient = SmtpClient;
@@ -55,6 +57,7 @@ pub fn client_for_target(req: &ClientRequest) -> Option<&'static dyn Client> {
         Protocol::Memcached => Some(&MEMCACHED_CLIENT),
         Protocol::Mqtt => Some(&MQTT_CLIENT),
         Protocol::Mssql => Some(&MSSQL_CLIENT),
+        Protocol::MsWbtServer => Some(&RDP_CLIENT),
         Protocol::Mysql => Some(&MYSQL_CLIENT),
         Protocol::Pop3 => Some(&POP3_CLIENT),
         Protocol::Redis => Some(&REDIS_CLIENT),

@@ -3,6 +3,7 @@ mod http;
 mod imap;
 mod mssql;
 mod mysql;
+mod rdp;
 mod rpcbind;
 mod ssh;
 
@@ -46,6 +47,8 @@ impl OutputSink {
                     mssql::mssql_data(&outcome)
                 } else if proto == "mysql" {
                     mysql::mysql_data(&outcome)
+                } else if matches!(proto, "ms-wbt-server" | "rdp") {
+                    rdp::rdp_data(&outcome)
                 } else if proto == "rpcbind" {
                     rpcbind::rpcbind_data(&outcome)
                 } else if proto == "ssh" {

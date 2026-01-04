@@ -72,6 +72,9 @@ pub enum Protocol {
     Mqtt,
     #[value(alias = "ms-sql-s")]
     Mssql,
+    #[value(alias = "ms-wbt-server")]
+    #[value(alias = "rdp")]
+    MsWbtServer,
     Mysql,
     Pop3,
     Postgres,
@@ -115,6 +118,7 @@ impl fmt::Display for Protocol {
             Protocol::Mongodb => "mongodb",
             Protocol::Mqtt => "mqtt",
             Protocol::Mssql => "mssql",
+            Protocol::MsWbtServer => "ms-wbt-server",
             Protocol::Mysql => "mysql",
             Protocol::Pop3 => "pop3",
             Protocol::Postgres => "postgres",
