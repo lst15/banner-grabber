@@ -2,6 +2,7 @@ use crate::model::{Protocol, ScanMode, Target};
 
 use super::ftp::FtpClient;
 use super::imap::ImapClient;
+use super::imqbroker::ImqBrokerClient;
 use super::memcached::MemcachedClient;
 use super::mqtt::MqttClient;
 use super::mssql::MssqlClient;
@@ -28,6 +29,7 @@ static NTP_CLIENT: NtpClient = NtpClient;
 
 static FTP_CLIENT: FtpClient = FtpClient;
 static IMAP_CLIENT: ImapClient = ImapClient;
+static IMQBROKER_CLIENT: ImqBrokerClient = ImqBrokerClient;
 static MEMCACHED_CLIENT: MemcachedClient = MemcachedClient;
 static MQTT_CLIENT: MqttClient = MqttClient;
 static MSSQL_CLIENT: MssqlClient = MssqlClient;
@@ -49,6 +51,7 @@ pub fn client_for_target(req: &ClientRequest) -> Option<&'static dyn Client> {
     match req.protocol {
         Protocol::Ftp => Some(&FTP_CLIENT),
         Protocol::Imap => Some(&IMAP_CLIENT),
+        Protocol::Imqbroker => Some(&IMQBROKER_CLIENT),
         Protocol::Memcached => Some(&MEMCACHED_CLIENT),
         Protocol::Mqtt => Some(&MQTT_CLIENT),
         Protocol::Mssql => Some(&MSSQL_CLIENT),

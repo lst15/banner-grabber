@@ -1,5 +1,6 @@
 pub mod ftp;
 pub mod imap;
+pub mod imqbroker;
 pub mod memcached;
 pub mod mqtt;
 pub mod pop3;
