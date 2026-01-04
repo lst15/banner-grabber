@@ -63,6 +63,7 @@ pub enum Protocol {
     Postgres,
     Redis,
     Smb,
+    #[value(alias = "submission")]
     Smtp,
     Ssh,
     Telnet,
