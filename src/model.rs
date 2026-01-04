@@ -50,6 +50,7 @@ pub struct OutputConfig {
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
     Ftp,
+    #[value(alias = "zeus-admin")]
     Http,
     Https,
     Imap,
