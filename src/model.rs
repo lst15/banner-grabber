@@ -56,6 +56,9 @@ pub enum Protocol {
     Http,
     Https,
     Imap,
+    #[value(alias = "imq")]
+    #[value(alias = "imqbroker")]
+    Imqbroker,
     Memcached,
     Mongodb,
     Mqtt,
@@ -98,6 +101,7 @@ impl fmt::Display for Protocol {
             Protocol::Http => "http",
             Protocol::Https => "https",
             Protocol::Imap => "imap",
+            Protocol::Imqbroker => "imqbroker",
             Protocol::Memcached => "memcached",
             Protocol::Mongodb => "mongodb",
             Protocol::Mqtt => "mqtt",
