@@ -59,6 +59,7 @@ pub enum Protocol {
     #[value(alias = "rtmp")]
     #[value(alias = "blackice-alerts")]
     #[value(alias = "device2")]
+    #[value(alias = "tor-trans")]
     #[value(alias = "dec-notes")]
     Http,
     #[value(alias = "appserv-http")]
