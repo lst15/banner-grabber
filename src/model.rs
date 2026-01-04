@@ -55,12 +55,17 @@ pub enum Protocol {
     #[value(alias = "nessus")]
     #[value(alias = "activesync")]
     #[value(alias = "http-proxy")]
+    #[value(alias = "ajp13")]
+    #[value(alias = "rtmp")]
+    #[value(alias = "blackice-alerts")]
+    #[value(alias = "device2")]
+    #[value(alias = "dec-notes")]
     Http,
     #[value(alias = "appserv-http")]
     Https,
     Imap,
     #[value(alias = "imq")]
-    #[value(alias = "imqbroker")]
+    #[value(alias = "imqbrokerd")]
     Imqbroker,
     Memcached,
     Mongodb,
@@ -74,6 +79,7 @@ pub enum Protocol {
     Rpcbind,
     Smb,
     #[value(alias = "submission")]
+    #[value(alias = "smtps")]
     Smtp,
     Ssh,
     Telnet,
