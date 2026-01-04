@@ -139,7 +139,7 @@ async fn read_rpc_message(stream: &mut TcpStream, cfg: &Config) -> Result<Vec<u8
     loop {
         let mut marker = [0u8; 4];
         match timeout(cfg.read_timeout, stream.read_exact(&mut marker)).await {
-            Ok(Ok(())) => {}
+            Ok(..) => {}
             Ok(Err(err)) => return Err(ReadError::Io(err.into())),
             Err(_) => return Err(ReadError::Timeout),
         }
@@ -149,7 +149,7 @@ async fn read_rpc_message(stream: &mut TcpStream, cfg: &Config) -> Result<Vec<u8
         if length > 0 {
             let mut fragment = vec![0u8; length];
             match timeout(cfg.read_timeout, stream.read_exact(&mut fragment)).await {
-                Ok(Ok(())) => {}
+                Ok(..) => {}
                 Ok(Err(err)) => return Err(ReadError::Io(err.into())),
                 Err(_) => return Err(ReadError::Timeout),
             }
