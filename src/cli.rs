@@ -119,22 +119,12 @@ impl Cli {
             anyhow::bail!("rate must be greater than zero");
         }
 
-        if webdriver
-            && !matches!(
-                protocol,
-                Protocol::Http | Protocol::Https | Protocol::Unknown(_)
-            )
-        {
-            anyhow::bail!("--webdriver requires --protocol http or --protocol https");
-        }
+        let mut webdriver = webdriver;
+        let mut tech = tech;
 
-        if tech
-            && !matches!(
-                protocol,
-                Protocol::Http | Protocol::Https | Protocol::Unknown(_)
-            )
-        {
-            anyhow::bail!("--tech requires --protocol http or --protocol https");
+        if !matches!(protocol, Protocol::Http | Protocol::Https) {
+            webdriver = false;
+            tech = false;
         }
 
         if input.is_some() && port.is_none() {
@@ -252,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_webdriver_without_http_protocol() {
+    fn ignores_webdriver_and_tech_without_http_protocol() {
         let cli = Cli {
             host: Some("127.0.0.1".into()),
             port: Some(21),
@@ -268,12 +258,11 @@ mod tests {
             pretty: false,
             protocol: Protocol::Ftp,
             webdriver: true,
-            tech: false,
+            tech: true,
         };
 
-        let err = cli.into_config().unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("--webdriver requires --protocol http or --protocol https"));
+        let cfg = cli.into_config().expect("config should build");
+        assert!(!cfg.webdriver);
+        assert!(!cfg.tech);
     }
 }
