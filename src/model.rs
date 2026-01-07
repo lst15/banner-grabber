@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,6 +1,7 @@
 use crate::model::{OutputFormat, Protocol};
 use clap::{ArgAction, Parser, ValueEnum};
 use std::fmt;
+use std::str::FromStr;
 use std::time::Duration;
 
 #[derive(Debug, Parser)]
