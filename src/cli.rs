@@ -55,7 +55,7 @@ pub struct Cli {
     pub pretty: bool,
 
     /// Protocol to probe (e.g. http, https, ftp)
-    #[arg(long = "protocol", value_enum)]
+    #[arg(long = "protocol", value_parser = parse_protocol)]
     pub protocol: Protocol,
 
     /// Use a headless browser (requires --protocol http or https)
@@ -118,8 +118,23 @@ impl Cli {
             anyhow::bail!("rate must be greater than zero");
         }
 
-        let webdriver = webdriver && matches!(protocol, Protocol::Http | Protocol::Https);
-        let tech = tech && matches!(protocol, Protocol::Http | Protocol::Https);
+        if webdriver
+            && !matches!(
+                protocol,
+                Protocol::Http | Protocol::Https | Protocol::Unknown(_)
+            )
+        {
+            anyhow::bail!("--webdriver requires --protocol http or --protocol https");
+        }
+
+        if tech
+            && !matches!(
+                protocol,
+                Protocol::Http | Protocol::Https | Protocol::Unknown(_)
+            )
+        {
+            anyhow::bail!("--tech requires --protocol http or --protocol https");
+        }
 
         if input.is_some() && port.is_none() {
             anyhow::bail!("--port is required when using --input");
@@ -176,6 +191,10 @@ impl Cli {
             },
         })
     }
+}
+
+fn parse_protocol(value: &str) -> Result<Protocol, String> {
+    Protocol::from_str(value)
 }
 
 #[cfg(test)]

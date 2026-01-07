@@ -46,32 +46,16 @@ pub struct OutputConfig {
     pub format: OutputFormat,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, ValueEnum)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Debug)]
 pub enum Protocol {
     Ftp,
-    #[value(alias = "zeus-admin")]
-    #[value(alias = "http-alt")]
-    #[value(alias = "nessus")]
-    #[value(alias = "activesync")]
-    #[value(alias = "http-proxy")]
-    #[value(alias = "ajp13")]
-    #[value(alias = "rtmp")]
-    #[value(alias = "blackice-alerts")]
-    #[value(alias = "device2")]
-    #[value(alias = "tor-trans")]
-    #[value(alias = "dec-notes")]
     Http,
-    #[value(alias = "appserv-http")]
     Https,
     Imap,
-    #[value(alias = "imq")]
-    #[value(alias = "imqbrokerd")]
     Imqbroker,
     Memcached,
     Mongodb,
     Mqtt,
-    #[value(alias = "ms-sql-s")]
     Mssql,
     Mysql,
     Pop3,
@@ -79,16 +63,14 @@ pub enum Protocol {
     Redis,
     Rpcbind,
     Smb,
-    #[value(alias = "submission")]
-    #[value(alias = "smtps")]
     Smtp,
     Ssh,
     Telnet,
     Tls,
     Vnc,
     Ntp,
-    #[value(alias = "ssdp")]
     Upnp,
+    Unknown(String),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ValueEnum)]
@@ -131,8 +113,65 @@ impl fmt::Display for Protocol {
             Protocol::Vnc => "vnc",
             Protocol::Ntp => "ntp",
             Protocol::Upnp => "upnp",
+            Protocol::Unknown(value) => value.as_str(),
         };
         write!(f, "{}", label)
+    }
+}
+
+impl Serialize for Protocol {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for Protocol {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Protocol::from_str(&value).unwrap_or_else(|_| Protocol::Unknown(value)))
+    }
+}
+
+impl std::str::FromStr for Protocol {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let normalized = value.trim().to_ascii_lowercase();
+        let protocol = match normalized.as_str() {
+            "ftp" => Protocol::Ftp,
+            "http" | "zeus-admin" | "http-alt" | "nessus" | "activesync" | "http-proxy"
+            | "ajp13" | "rtmp" | "blackice-alerts" | "device2" | "tor-trans" | "dec-notes" => {
+                Protocol::Http
+            }
+            "https" | "appserv-http" => Protocol::Https,
+            "imap" => Protocol::Imap,
+            "imq" | "imqbrokerd" | "imqbroker" => Protocol::Imqbroker,
+            "memcached" => Protocol::Memcached,
+            "mongodb" => Protocol::Mongodb,
+            "mqtt" => Protocol::Mqtt,
+            "mssql" | "ms-sql-s" => Protocol::Mssql,
+            "mysql" => Protocol::Mysql,
+            "pop3" => Protocol::Pop3,
+            "postgres" => Protocol::Postgres,
+            "redis" => Protocol::Redis,
+            "rpcbind" => Protocol::Rpcbind,
+            "smb" => Protocol::Smb,
+            "smtp" | "submission" | "smtps" => Protocol::Smtp,
+            "ssh" => Protocol::Ssh,
+            "telnet" => Protocol::Telnet,
+            "tls" => Protocol::Tls,
+            "vnc" => Protocol::Vnc,
+            "ntp" => Protocol::Ntp,
+            "upnp" | "ssdp" => Protocol::Upnp,
+            _ => Protocol::Unknown(value.trim().to_string()),
+        };
+        Ok(protocol)
     }
 }
 

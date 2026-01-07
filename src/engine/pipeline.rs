@@ -7,10 +7,13 @@ use crate::probe::{probe_for_target, ProbeRequest};
 use crate::util::{now_iso8601, now_millis};
 use crate::webdriver;
 use async_trait::async_trait;
+use std::process::Stdio;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
+use tokio::process::Command;
 use tokio::time::timeout;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::reader::BannerReader;
 
@@ -77,7 +80,9 @@ impl TargetProcessor for DefaultProcessor {
         let fingerprint = Fingerprint::from_protocol(&config.protocol);
         let tls_info = read_result.tls_info.clone();
         let banner = BannerReader::new(config.max_bytes, config.read_timeout).render(read_result);
-        let (webdriver_body, diagnostics) = if config.webdriver {
+        let (webdriver_body, diagnostics) = if config.webdriver
+            && matches!(config.protocol, Protocol::Http | Protocol::Https)
+        {
             match webdriver::fetch_rendered_body(&target, &config.protocol, config.overall_timeout)
                 .await
             {
@@ -307,6 +312,91 @@ async fn process_tcp_stream(
                 &config.protocol,
             )),
         }
+    }
+}
+
+pub(crate) async fn resolve_protocol(config: &Config, target: &crate::model::Target) -> Protocol {
+    match &config.protocol {
+        Protocol::Unknown(raw) => match detect_http_protocol(target).await {
+            Some(protocol) => protocol,
+            None => Protocol::Unknown(raw.clone()),
+        },
+        protocol => protocol.clone(),
+    }
+}
+
+async fn detect_http_protocol(target: &crate::model::Target) -> Option<Protocol> {
+    let host = format_host_for_url(&target.original.host);
+    let port = target.original.port;
+    let https_url = format!("https://{}:{}", host, port);
+    let http_url = format!("http://{}:{}", host, port);
+    let input = format!("{https_url}\n{http_url}\n");
+    let output = run_httpx(&input).await?;
+    let mut saw_https = false;
+    let mut saw_http = false;
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("https://") {
+            saw_https = true;
+        } else if trimmed.starts_with("http://") {
+            saw_http = true;
+        }
+    }
+
+    if saw_https {
+        Some(Protocol::Https)
+    } else if saw_http {
+        Some(Protocol::Http)
+    } else {
+        None
+    }
+}
+
+async fn run_httpx(input: &str) -> Option<String> {
+    let mut child = match Command::new("httpx")
+        .arg("-silent")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => {
+            warn!(error = %err, "httpx unavailable; skipping protocol detection");
+            return None;
+        }
+    };
+
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Err(err) = stdin.write_all(input.as_bytes()).await {
+            warn!(error = %err, "failed to send input to httpx");
+            return None;
+        }
+    }
+
+    let output = match child.wait_with_output().await {
+        Ok(output) => output,
+        Err(err) => {
+            warn!(error = %err, "failed to read httpx output");
+            return None;
+        }
+    };
+
+    if !output.status.success() {
+        warn!(status = ?output.status, "httpx returned non-zero status");
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    Some(stdout)
+}
+
+fn format_host_for_url(host: &str) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{}]", host)
+    } else {
+        host.to_string()
     }
 }
 
