@@ -7,10 +7,13 @@ use crate::probe::{probe_for_target, ProbeRequest};
 use crate::util::{now_iso8601, now_millis};
 use crate::webdriver;
 use async_trait::async_trait;
+use std::process::Stdio;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
+use tokio::process::Command;
 use tokio::time::timeout;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::reader::BannerReader;
 
@@ -33,6 +36,7 @@ impl TargetProcessor for DefaultProcessor {
         target: crate::model::Target,
         config: std::sync::Arc<Config>,
     ) -> anyhow::Result<ScanOutcome> {
+        let protocol = resolve_protocol(config.as_ref(), &target).await;
         let start = now_millis();
         let tcp_start = now_millis();
         let connect_timeout = adjusted_connect_timeout(config.as_ref(), &target);
@@ -40,24 +44,31 @@ impl TargetProcessor for DefaultProcessor {
         let client_request = ClientRequest {
             target: target.clone(),
             mode: config.mode,
-            protocol: config.protocol.clone(),
+            protocol: protocol.clone(),
         };
         if let Some(outcome) =
-            attempt_udp_scan(target.clone(), config.as_ref(), &client_request).await?
+            attempt_udp_scan(target.clone(), config.as_ref(), &protocol, &client_request).await?
         {
             return Ok(outcome);
         }
 
-        let (stream, tcp_meta) =
-            match connect_tcp(target.clone(), config.as_ref(), connect_timeout, tcp_start).await? {
-                Ok(connection) => connection,
-                Err(outcome) => return Ok(outcome),
-            };
+        let (stream, tcp_meta) = match connect_tcp(
+            target.clone(),
+            config.as_ref(),
+            connect_timeout,
+            tcp_start,
+            &protocol,
+        )
+        .await?
+        {
+            Ok(connection) => connection,
+            Err(outcome) => return Ok(outcome),
+        };
 
         let probe_request = ProbeRequest {
             target: target.clone(),
             mode: config.mode,
-            protocol: config.protocol.clone(),
+            protocol: protocol.clone(),
         };
 
         let read_result = match process_tcp_stream(
@@ -67,6 +78,7 @@ impl TargetProcessor for DefaultProcessor {
             &client_request,
             &probe_request,
             &tcp_meta,
+            &protocol,
         )
         .await
         {
@@ -74,13 +86,13 @@ impl TargetProcessor for DefaultProcessor {
             Err(outcome) => return Ok(outcome),
         };
 
-        let fingerprint = Fingerprint::from_protocol(&config.protocol);
+        let fingerprint = Fingerprint::from_protocol(&protocol);
         let tls_info = read_result.tls_info.clone();
         let banner = BannerReader::new(config.max_bytes, config.read_timeout).render(read_result);
-        let (webdriver_body, diagnostics) = if config.webdriver {
-            match webdriver::fetch_rendered_body(&target, &config.protocol, config.overall_timeout)
-                .await
-            {
+        let (webdriver_body, diagnostics) = if config.webdriver
+            && matches!(protocol, Protocol::Http | Protocol::Https)
+        {
+            match webdriver::fetch_rendered_body(&target, &protocol, config.overall_timeout).await {
                 Ok(body) => (Some(body), None),
                 Err(err) => (
                     None,
@@ -93,12 +105,11 @@ impl TargetProcessor for DefaultProcessor {
         } else {
             (None, None)
         };
-        let technologies =
-            if config.tech && matches!(config.protocol, Protocol::Http | Protocol::Https) {
-                scan_technologies(&target, &config.protocol).await
-            } else {
-                None
-            };
+        let technologies = if config.tech && matches!(protocol, Protocol::Http | Protocol::Https) {
+            scan_technologies(&target, &protocol).await
+        } else {
+            None
+        };
         let total = now_millis() - start;
         debug!(target = %target.resolved, ms = total, "processed target");
 
@@ -121,6 +132,7 @@ impl TargetProcessor for DefaultProcessor {
 async fn attempt_udp_scan(
     target: crate::model::Target,
     config: &Config,
+    protocol: &Protocol,
     client_request: &ClientRequest,
 ) -> anyhow::Result<Option<ScanOutcome>> {
     if let Some(udp_client) = udp_client_for_target(client_request) {
@@ -144,7 +156,7 @@ async fn attempt_udp_scan(
                     }),
                     config.max_bytes,
                     config.read_timeout,
-                    &config.protocol,
+                    protocol,
                 )))
             }
         };
@@ -157,7 +169,7 @@ async fn attempt_udp_scan(
         let banner =
             BannerReader::new(config.max_bytes, config.read_timeout).render(read_result.clone());
         let tls_info = read_result.tls_info.clone();
-        let fingerprint = Fingerprint::from_protocol(&config.protocol);
+        let fingerprint = Fingerprint::from_protocol(protocol);
         let elapsed = now_millis() - udp_start;
 
         return Ok(Some(ScanOutcome {
@@ -186,6 +198,7 @@ async fn connect_tcp(
     config: &Config,
     connect_timeout: Duration,
     tcp_start: u128,
+    protocol: &Protocol,
 ) -> anyhow::Result<Result<(TcpStream, TcpMeta), ScanOutcome>> {
     let connect_result = timeout(connect_timeout, TcpStream::connect(target.resolved)).await;
 
@@ -215,7 +228,7 @@ async fn connect_tcp(
             }),
             config.max_bytes,
             config.read_timeout,
-            &config.protocol,
+            protocol,
         )),
         Err(_) => Err(build_outcome_with_context(
             target,
@@ -232,7 +245,7 @@ async fn connect_tcp(
             }),
             config.max_bytes,
             config.read_timeout,
-            &config.protocol,
+            protocol,
         )),
     };
 
@@ -246,6 +259,7 @@ async fn process_tcp_stream(
     client_request: &ClientRequest,
     probe_request: &ProbeRequest,
     tcp_meta: &TcpMeta,
+    protocol: &Protocol,
 ) -> Result<super::reader::ReadResult, ScanOutcome> {
     let client = client_for_target(client_request);
     let probe = probe_for_target(probe_request);
@@ -266,7 +280,7 @@ async fn process_tcp_stream(
                 }),
                 config.max_bytes,
                 config.read_timeout,
-                &config.protocol,
+                protocol,
             )),
         }
     } else if let Some(probe) = probe {
@@ -284,7 +298,7 @@ async fn process_tcp_stream(
                 }),
                 config.max_bytes,
                 config.read_timeout,
-                &config.protocol,
+                protocol,
             )),
         }
     } else {
@@ -304,9 +318,94 @@ async fn process_tcp_stream(
                 }),
                 config.max_bytes,
                 config.read_timeout,
-                &config.protocol,
+                protocol,
             )),
         }
+    }
+}
+
+async fn resolve_protocol(config: &Config, target: &crate::model::Target) -> Protocol {
+    match &config.protocol {
+        Protocol::Unknown(raw) => match detect_http_protocol(target).await {
+            Some(protocol) => protocol,
+            None => Protocol::Unknown(raw.clone()),
+        },
+        protocol => protocol.clone(),
+    }
+}
+
+async fn detect_http_protocol(target: &crate::model::Target) -> Option<Protocol> {
+    let host = format_host_for_url(&target.original.host);
+    let port = target.original.port;
+    let https_url = format!("https://{}:{}", host, port);
+    let http_url = format!("http://{}:{}", host, port);
+    let input = format!("{https_url}\n{http_url}\n");
+    let output = run_httpx(&input).await?;
+    let mut saw_https = false;
+    let mut saw_http = false;
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("https://") {
+            saw_https = true;
+        } else if trimmed.starts_with("http://") {
+            saw_http = true;
+        }
+    }
+
+    if saw_https {
+        Some(Protocol::Https)
+    } else if saw_http {
+        Some(Protocol::Http)
+    } else {
+        None
+    }
+}
+
+async fn run_httpx(input: &str) -> Option<String> {
+    let mut child = match Command::new("httpx")
+        .arg("-silent")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => {
+            warn!(error = %err, "httpx unavailable; skipping protocol detection");
+            return None;
+        }
+    };
+
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Err(err) = stdin.write_all(input.as_bytes()).await {
+            warn!(error = %err, "failed to send input to httpx");
+            return None;
+        }
+    }
+
+    let output = match child.wait_with_output().await {
+        Ok(output) => output,
+        Err(err) => {
+            warn!(error = %err, "failed to read httpx output");
+            return None;
+        }
+    };
+
+    if !output.status.success() {
+        warn!(status = ?output.status, "httpx returned non-zero status");
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    Some(stdout)
+}
+
+fn format_host_for_url(host: &str) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{}]", host)
+    } else {
+        host.to_string()
     }
 }
 
