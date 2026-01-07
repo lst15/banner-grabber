@@ -6,7 +6,7 @@ use crate::model::Config;
 use crate::output::OutputChannel;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use pipeline::{DefaultProcessor, TargetProcessor};
+use pipeline::{resolve_protocol, DefaultProcessor, TargetProcessor};
 use rate::RateLimiter;
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
@@ -57,20 +57,28 @@ impl Engine {
             let processor = self.processor.clone();
             tasks.push(tokio::spawn(async move {
                 let _permit = permit;
+                let resolved_protocol = resolve_protocol(cfg.as_ref(), &target).await;
+                let mut resolved_cfg = (*cfg).clone();
+                resolved_cfg.protocol = resolved_protocol;
+                let resolved_cfg = std::sync::Arc::new(resolved_cfg);
                 let res = timeout(
-                    cfg.overall_timeout,
-                    processor.process_target(target.clone(), cfg.clone()),
+                    resolved_cfg.overall_timeout,
+                    processor.process_target(target.clone(), resolved_cfg.clone()),
                 )
                 .await;
                 match res {
                     Ok(Ok(outcome)) => sink.emit(outcome).await?,
                     Ok(Err(err)) => {
-                        sink.emit_error(target, &cfg.protocol, err.to_string())
+                        sink.emit_error(target, &resolved_cfg.protocol, err.to_string())
                             .await?
                     }
                     Err(_) => {
-                        sink.emit_error(target, &cfg.protocol, "overall timeout".to_string())
-                            .await?
+                        sink.emit_error(
+                            target,
+                            &resolved_cfg.protocol,
+                            "overall timeout".to_string(),
+                        )
+                        .await?
                     }
                 }
                 Ok::<_, anyhow::Error>(())
